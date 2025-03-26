@@ -19,6 +19,9 @@ struct TSParams
 	float s_2;
 	float u_2;
 	float m_2;
+	float forward_limit;
+    float inverse_limit;
+    float log_peak;
 };
 
 
@@ -52,6 +55,10 @@ TSParams init_TSParams( float peakLuminance) {
     const float u_2 = pow( (r_hit/m_1)/((r_hit/m_1) + w_2), g);
     const float m_2 = m_1 / u_2;
     
+	const float forward_limit = 8.0 * r_hit;
+	const float inverse_limit = n / (u_2 * n_r);
+	const float log_peak = log10( n / n_r);
+
     TSParams TonescaleParams = { 
     	n, 
     	n_r, 
@@ -60,7 +67,10 @@ TSParams init_TSParams( float peakLuminance) {
     	c_t, 
     	s_2, 
     	u_2, 
-    	m_2 
+    	m_2,
+		forward_limit,
+		inverse_limit,
+		log_peak
     };
     return TonescaleParams;
 }

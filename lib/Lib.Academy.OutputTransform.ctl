@@ -140,6 +140,9 @@ struct ODTParams
     float s_2;
     float u_2;
     float m_2;
+    float forward_limit;
+    float inverse_limit;
+    float log_peak;
 
     // Chroma Compression
     float limitJmax;
@@ -1348,7 +1351,7 @@ ODTParams init_ODTParams(
     const float chroma_expand_thr = 0.5;
 
     // Calculated chroma compress variables
-    const float log_peak = log10(TSPARAMS.n / TSPARAMS.n_r);
+    const float log_peak = TSPARAMS.log_peak;
     const float compr = chroma_compress + (chroma_compress * chroma_compress_fact) * log_peak;
     const float sat = max(0.2, chroma_expand - (chroma_expand * chroma_expand_fact) * log_peak);
     const float sat_thr = chroma_expand_thr / TSPARAMS.n;
@@ -1390,6 +1393,9 @@ ODTParams init_ODTParams(
         TSPARAMS.s_2,
         TSPARAMS.u_2,
         TSPARAMS.m_2,
+        TSPARAMS.forward_limit,
+        TSPARAMS.inverse_limit,
+        TSPARAMS.log_peak,
 
         // Chroma Compression
         limitJmax,
