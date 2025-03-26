@@ -407,36 +407,27 @@ float Y_to_Hellwig_J(float Y,
 }
 
 float[3] clamp_XYZ_to_AP1(float XYZ[3],
-                          float XYZ_to_AP1_matrix[4][4],
-                          float peakLuminance)
+                          float clamp_upper_limit)
 {
-    float ap1[3] = mult_f3_f44(XYZ, XYZ_to_AP1_matrix);
-
-    const float upper_clamp_limit = 8. * (128 + 768 * (log(peakLuminance/100.)/log(10000./100.))); 
-    // limit to nice power of 2 (3 stops) above that needed to max out
-    // note the quantity (128 + ...) is the definition of r_hit from the tonescale constants
-
-    float ap1_clamped[3] = clamp_f3(ap1, 0., upper_clamp_limit);
-    float XYZ_clamped[3] = mult_f3_f44(ap1_clamped, invert_f44(XYZ_to_AP1_matrix));
+    float ap1[3] = mult_f3_f33(XYZ, AP1_XYZ_TO_RGB);
+    float ap1_clamped[3] = clamp_f3(ap1, 0., clamp_upper_limit);
+    float XYZ_clamped[3] = mult_f3_f33(ap1_clamped, invert_f33(AP1_XYZ_TO_RGB));
 
     return XYZ_clamped;
 }
 
 float[3] aces_to_JMh(float aces[3],
-                     float peakLuminance)
+                     ODTParams PARAMS)
 {
-    const float ACES_TO_XYZ_M[3][3] = RGBtoXYZ_f33(AP0, 1.0);
-
     // AP0 to XYZ
-    float XYZ[3] = mult_f3_f33(aces, ACES_TO_XYZ_M);
+    float XYZ[3] = mult_f3_f33(aces, AP0_RGB_TO_XYZ);
 
-    // Clamp to half float range
-    const float AP1_XYZ_TO_RGB[4][4] = XYZtoRGB(AP1, 1.0);
-    XYZ = clamp_XYZ_to_AP1(XYZ, AP1_XYZ_TO_RGB, peakLuminance);
+    // Clamp to AP1 at forward_limit
+    XYZ = clamp_XYZ_to_AP1(XYZ, PARAMS.forward_limit);
 
     // XYZ to JMh
     float RGB_w[3] = {referenceLuminance, referenceLuminance, referenceLuminance};
-    float XYZ_w[3] = mult_f3_f33(RGB_w, ACES_TO_XYZ_M);
+    float XYZ_w[3] = mult_f3_f33(RGB_w, AP0_RGB_TO_XYZ);
 
     float XYZluminance[3] = mult_f_f3(referenceLuminance, XYZ);
     float JMh[3] = XYZ_to_Hellwig2022_JMh(XYZluminance, XYZ_w);
@@ -447,9 +438,8 @@ float[3] aces_to_JMh(float aces[3],
 float[3] JMh_to_aces(float JMh[3],
                      float peakLuminance)
 {
-    const float XYZ_TO_ACES_M[3][3] = XYZtoRGB_f33(AP0, 1.0);
     const float RGB_w[3] = {referenceLuminance, referenceLuminance, referenceLuminance};
-    float XYZ_w_aces[3] = mult_f3_f33(RGB_w, invert_f33(XYZ_TO_ACES_M));
+    float XYZ_w_aces[3] = mult_f3_f33(RGB_w, AP0_RGB_TO_XYZ);
 
     // JMh to XYZ
     float XYZluminance[3] = Hellwig2022_JMh_to_XYZ(JMh, XYZ_w_aces);
@@ -457,7 +447,7 @@ float[3] JMh_to_aces(float JMh[3],
     float XYZ[3] = mult_f_f3(1. / referenceLuminance, XYZluminance);
 
     // XYZ to ACES
-    float ACES[3] = mult_f3_f33(XYZ, XYZ_TO_ACES_M);
+    float ACES[3] = mult_f3_f33(XYZ, AP0_XYZ_TO_RGB);
 
     return ACES;
 }
@@ -1441,7 +1431,7 @@ float[3] outputTransform_fwd(float aces[3],
                              float REACHM_TABLE[])
 {
     float JMh[3] = aces_to_JMh(aces,
-                               peakLuminance);
+                               PARAMS);
 
     float tonemappedJMh[3] = tonemapAndCompress_fwd(JMh,
                                                     PARAMS,
