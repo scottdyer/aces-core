@@ -74,6 +74,12 @@ float[3] clamp_f3( float in[3],
     return out;
 }
 
+float[3]  f3_from_f( float a)
+{
+    float f3[3] = {a, a, a};
+    return f3;
+}
+
 float[3] add_f_f3( float a, 
                    float b[3] )
 {
