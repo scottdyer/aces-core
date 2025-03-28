@@ -182,12 +182,19 @@ float[3] vector_dot( float m[3][3], float v[3] )
 	return r;
 }
 
-// linear interpolation between two values a & b with theß bias t
-float lerp( float a, 
-            float b, 
-            float t )
+
+// linear interpolation between two values a & b with the bias t
+float lerp( float a, float b, float t )
 {
     return a + t * (b - a);
+}
+
+float[3] lerp_f3( float a[3], float b[3], float t )
+{
+    float lerped[3] = {lerp(a[0], b[0], t),
+                       lerp(a[1], b[1], t),
+                       lerp(a[2], b[2], t)};
+    return lerped;
 }
 
 float radians_to_degrees( float radians )
