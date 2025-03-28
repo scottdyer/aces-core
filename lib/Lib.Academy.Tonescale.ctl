@@ -26,12 +26,13 @@ struct TSParams
 
 
 // Tonescale pre-calculations
-TSParams init_TSParams( float peakLuminance) {
+TSParams init_TSParams(float peakLuminance)
+{
 
-    // Preset constants that set the desired behavior for the curve
-    const float n = peakLuminance;
-    
-    const float n_r = 100.0;    // normalized white in nits (what 1.0 should be)
+	// Preset constants that set the desired behavior for the curve
+	const float n = peakLuminance;
+
+	const float n_r = 100.0;    // normalized white in nits (what 1.0 should be)
     const float g = 1.15;       // surround / contrast
     const float c = 0.18;	    // anchor for 18% grey
     const float c_d = 10.013;   // output luminance of 18% grey (in nits)
@@ -55,32 +56,26 @@ TSParams init_TSParams( float peakLuminance) {
     const float u_2 = pow( (r_hit/m_1)/((r_hit/m_1) + w_2), g);
     const float m_2 = m_1 / u_2;
     
-	const float forward_limit = 8.0 * r_hit;
-	const float inverse_limit = n / (u_2 * n_r);
-	const float log_peak = log10( n / n_r);
+	TSParams p;
+	p.n = n; 
+	p.n_r = n_r;
+	p.g = g;
+	p.t_1 = t_1;
+	p.c_t = c_t;
+	p.s_2 = s_2;
+	p.u_2 = u_2;
+	p.m_2 = m_2;
+	p.forward_limit = 8.0 * r_hit;
+	p.inverse_limit = n / (u_2 * n_r);
+	p.log_peak = log10( n / n_r);
 
-    TSParams TonescaleParams = { 
-    	n, 
-    	n_r, 
-    	g, 
-    	t_1, 
-    	c_t, 
-    	s_2, 
-    	u_2, 
-    	m_2,
-		forward_limit,
-		inverse_limit,
-		log_peak
-    };
-    return TonescaleParams;
+    return p;
 }
 
-
 /* --- Tone scale math --- */
-float tonescale_fwd( 
-	float x, 				// scene-referred input (i.e. linear ACES2065-1)
-	TSParams params 		// struct of type TSParams
-) 	
+float tonescale_fwd(float x,		// scene-referred input (i.e. linear ACES2065-1)
+					TSParams params // struct of type TSParams
+)
 {
 	// forward MM tone scale
 	float f = params.m_2 * pow( max(0.0, x) / (x + params.s_2), params.g);  	
@@ -89,10 +84,9 @@ float tonescale_fwd(
 	return h * params.n_r;	// output is luminance in cd/m^2
 }
 
-float tonescale_inv( 
-	float Y,				// luminance in cd/m^2
-	TSParams params 		// struct of type TSParams
-)  
+float tonescale_inv(float Y,		// luminance in cd/m^2
+					TSParams params // struct of type TSParams
+)
 {
 	float Z = max(0., min(params.n / (params.u_2 * params.n_r), Y));
 	float h = (Z + sqrt(Z * (4. * params.t_1 + Z))) / 2.;
