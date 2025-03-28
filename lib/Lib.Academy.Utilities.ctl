@@ -367,6 +367,14 @@ void print_table_f( float t[] )
     }
 }
 
+void print_table_i( int t[] )
+{
+    print( "\n");
+    for (int i = 0; i < t.size; i = i + 1) {
+        print( t[i], "\n");
+    }
+}
+
 void print_table_f3( float t[][3] )
 {
     print( "\n");
