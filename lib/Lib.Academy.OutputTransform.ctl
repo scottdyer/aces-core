@@ -7,29 +7,7 @@
 // transform
 //
 
-// Gamut compression constants
-const float smoothCusps = 0.12;
-const float smoothM = 0.27;
-const float cuspMidBlend = 1.3;
-
-const float focusGainBlend = 0.3;
-const float focusAdjustGain = 0.55;
-const float focusDistance = 1.35;
-const float focusDistanceScaling = 1.75;
-
-// Constant used in gamut mapping
-const float compressionThreshold = 0.75;
-
-const int gamutTableSize = 360;       // add 1 extra entry at end that is to duplicate first entry for wrapped hue
-const int additionalTableEntries = 2; // allots for extra entries to wrap the hues without special cases
-const int totalTableSize = gamutTableSize + additionalTableEntries;
-const int baseIndex = 1; // array index for smallest hue, which is not necessarily a 0.0 hue angle
-
-const float gammaMinimum = 0.0;
-const float gammaMaximum = 5.0;
-const float gammaSearchStep = 0.4;
-const float gammaAccuracy = 1e-5;
-
+// Chromaticities & Conversion matrices
 // Academy Primaries 0 (i.e. "ACES" Primaries from SMPTE ST2065-1)
 const Chromaticities AP0 =
     {
@@ -38,6 +16,9 @@ const Chromaticities AP0 =
         {0.00010, -0.07700},
         {0.32168, 0.33767}
     };
+
+const float AP0_XYZ_TO_RGB[3][3] = XYZtoRGB_f33(AP0, 1.0);
+const float AP0_RGB_TO_XYZ[3][3] = RGBtoXYZ_f33(AP0, 1.0);
 
 // Academy Primaries 1
 const Chromaticities AP1 =
@@ -48,85 +29,73 @@ const Chromaticities AP1 =
         {0.32168, 0.33767}
     };
 
+const float AP1_XYZ_TO_RGB[3][3] = XYZtoRGB_f33(AP1, 1.0);
+const float AP1_RGB_TO_XYZ[3][3] = RGBtoXYZ_f33(AP1, 1.0);
+
+const float AP0_TO_AP1[3][3] = mult_f33_f33( AP0_RGB_TO_XYZ, AP1_XYZ_TO_RGB);
+const float AP1_TO_AP0[3][3] = mult_f33_f33( AP1_RGB_TO_XYZ, AP0_XYZ_TO_RGB);
+
 // "Reach" Primaries - equal to ACES "AP1" primaries
 const Chromaticities REACH_PRI = AP1;
 
-const float AP0_XYZ_TO_RGB[3][3] = XYZtoRGB_f33(AP0, 1.0);
-const float AP0_RGB_TO_XYZ[3][3] = RGBtoXYZ_f33(AP0, 1.0);
 
-const float AP1_XYZ_TO_RGB[3][3] = XYZtoRGB_f33(AP1, 1.0);
+// Table generation
+const int tableSize = 360;       // add 1 extra entry at end that is to duplicate first entry for wrapped hue
+const int additionalTableEntries = 2; // allots for extra entries to wrap the hues without special cases
+const int totalTableSize = tableSize + additionalTableEntries;
+const int baseIndex = 1; // array index for smallest hue, which is not necessarily a 0.0 hue angle
 
-const float referenceLuminance = 100.;
+const float hue_limit = 360.;
+
+const int cuspCornerCount = 6;
+const int totalCornerCount = cuspCornerCount + 2;
+const int max_sorted_corners = 2 * cuspCornerCount;
+const float reach_cusp_tolerance = 1e-3;
+const float display_cusp_tolerance = 1e-7;
+
+const float gammaMinimum = 0.0;
+const float gammaMaximum = 5.0;
+const float gammaSearchStep = 0.4;
+const float gammaAccuracy = 1e-5;
 
 // CAM Parameters
+const float referenceLuminance = 100.;
 const float L_A = 100.;
 const float Y_b = 20.;
+const float surround[3] = {0.9, 0.59, 0.9}; // Dim surround
 
-const float ac_resp = 1.0;
-const float ra = 2. * ac_resp;
-const float ba = 0.05 + (2. - ra);
+const float J_scale = 100.0;
+const float cam_nl_Y_reference = 100.0;
+const float cam_nl_offset = 0.2713 * cam_nl_Y_reference;
+const float cam_nl_scale = 4.0 * cam_nl_Y_reference;
 
-float[3] viewingConditionsToSurround(int viewingConditions = 1)
-{
-    float newSurround[3];
+const float model_gamma = surround[1] * (1.48 + sqrt(Y_b / referenceLuminance));
 
-    if (viewingConditions == 0)
-    { // "Dark"
-        newSurround[0] = 0.8;
-        newSurround[1] = 0.525;
-        newSurround[2] = 0.8;
-    }
-    else if (viewingConditions == 1)
-    { // "Dim
-        newSurround[0] = 0.9;
-        newSurround[1] = 0.59;
-        newSurround[2] = 0.9;
-    }
-    else if (viewingConditions == 2)
-    { // "Average"
-        newSurround[0] = 1.0;
-        newSurround[1] = 0.69;
-        newSurround[2] = 1.0;
-    }
-    else
-    {
-    }
-    return newSurround;
-}
+// Chroma compression
+const float chroma_compress = 2.4;
+const float chroma_compress_fact = 3.3;
+const float chroma_expand = 1.3;
+const float chroma_expand_fact = 0.69;
+const float chroma_expand_thr = 0.5;
 
-const Chromaticities CAM16_PRI =
-    {
-        {0.8336, 0.1735},
-        {2.3854, -1.4659},
-        {0.087, -0.125},
-        {0.333, 0.333}
-    };
+// Gamut compression
+const float smoothCusps = 0.12;
+const float smoothM = 0.27;
+const float cuspMidBlend = 1.3;
 
-const float MATRIX_16[3][3] = XYZtoRGB_f33(CAM16_PRI, 1.0);
+const float focusGainBlend = 0.3;
+const float focusAdjustGain = 0.55;
+const float focusDistance = 1.35;
+const float focusDistanceScaling = 1.75;
 
-float[3][3] generate_panlrcm(float ra = 2.,
-                             float ba = 0.05)
-{
-    float panlrcm_data[3][3] =
-        {
-            {ra, 1., 1. / 9.},
-            {1., -12. / 11., 1. / 9.},
-            {ba, 1. / 11., -2. / 9.}};
-    float panlrcm[3][3] = invert_f33(panlrcm_data);
+const float compressionThreshold = 0.75;
 
-    // Normalize columns so that first row is 460
-    for (int i = 0; i < 3; i = i + 1)
-    {
-        float n = 460.0 / panlrcm[0][i];
-        panlrcm[0][i] = panlrcm[0][i] * n;
-        panlrcm[1][i] = panlrcm[1][i] * n;
-        panlrcm[2][i] = panlrcm[2][i] * n;
-    }
+const float MATRIX_IDENTITY[3][3] = {
+    {1., 0, 0},
+    {0, 1., 0},
+    {0, 0, 1.}
+};
 
-    return panlrcm;
-}
-
-const float panlrcm[3][3] = generate_panlrcm(ra, ba); // Matrix for Hellwig inverse
 struct JMhParams
 {
     float MATRIX_RGB_to_CAM16_c[3][3];
