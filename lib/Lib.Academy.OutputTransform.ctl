@@ -127,6 +127,18 @@ float[3][3] generate_panlrcm(float ra = 2.,
 }
 
 const float panlrcm[3][3] = generate_panlrcm(ra, ba); // Matrix for Hellwig inverse
+struct JMhParams
+{
+    float MATRIX_RGB_to_CAM16_c[3][3];
+    float MATRIX_CAM16_c_to_RGB[3][3];
+    float MATRIX_cone_response_to_Aab[3][3];
+    float MATRIX_Aab_to_cone_response[3][3];
+    float F_L_n;    // F_L normalised
+    float cz;
+    float inv_cz;   // 1/cz
+    float A_w_J;
+    float inv_A_w_J; // 1/A_w_J
+};
 
 struct ODTParams
 {
@@ -223,6 +235,158 @@ float[3] post_adaptation_non_linear_response_compression_inverse(float RGB[3], f
     return RGB_p;
 }
 
+float _post_adaptation_cone_response_compression_fwd(float Rc)
+{
+    const float F_L_Y = pow(Rc, 0.42);
+    const float Ra = (F_L_Y) / (cam_nl_offset + F_L_Y);
+    return Ra;
+}
+
+float _post_adaptation_cone_response_compression_inv(float Ra)
+{
+    const float F_L_Y = (cam_nl_offset * Ra) / (1. - Ra);
+    const float Rc = pow(F_L_Y, 1. / 0.42);
+    return Rc;
+}
+
+float post_adaptation_cone_response_compression_fwd(float v)
+{
+    const float abs_v = fabs(v);
+    const float Ra = _post_adaptation_cone_response_compression_fwd(abs_v);
+    return copysign(Ra, v);
+}
+
+float post_adaptation_cone_response_compression_inv(float v)
+{
+    const float abs_v = fabs(v);
+    const float Rc = _post_adaptation_cone_response_compression_inv(abs_v);
+    return copysign(Rc, v);
+}
+
+float Achromatic_n_to_J(float A,
+                        float cz)
+{
+    return J_scale * pow(A, cz);
+}
+
+float J_to_Achromatic_n(float J,
+                        float inv_cz)
+{
+    return pow(J * (1. / J_scale), inv_cz);
+}
+
+// Optimization for achromatic values
+float _A_to_Y(float A,
+              JMhParams p)
+{
+    float Ra = p.A_w_J * A;
+    float Y = _post_adaptation_cone_response_compression_inv(Ra) / p.F_L_n;
+    return Y;
+}
+
+float _J_to_Y(float abs_J,
+              JMhParams p)
+{
+    return _A_to_Y(J_to_Achromatic_n(abs_J, p.inv_cz), p);
+}
+
+float _Y_to_J(float abs_Y,
+              JMhParams p)
+{
+    float Ra = _post_adaptation_cone_response_compression_fwd(abs_Y * p.F_L_n);
+    float J = Achromatic_n_to_J(Ra * p.inv_A_w_J, p.cz);
+    return J;
+}
+
+float Y_to_J(float Y,
+             JMhParams p)
+{
+    float abs_Y = fabs(Y);
+    float J = _Y_to_J(abs_Y, p);
+    return copysign(J, Y);
+}
+
+float[3] RGB_to_Aab(float RGB[3],
+                    JMhParams p)
+{
+    float rgb_m[3] = mult_f3_f33(RGB, p.MATRIX_RGB_to_CAM16_c);
+
+    float rgb_a[3] = {
+        post_adaptation_cone_response_compression_fwd(rgb_m[0]),
+        post_adaptation_cone_response_compression_fwd(rgb_m[1]),
+        post_adaptation_cone_response_compression_fwd(rgb_m[2])};
+
+    float Aab[3] = mult_f3_f33(rgb_a, p.MATRIX_cone_response_to_Aab);
+    return Aab;
+}
+
+float[3] Aab_to_JMh(float Aab[3],
+                    JMhParams p)
+{
+    float JMh[3] = {0., 0., 0.};
+    if (Aab[0] <= 0.)
+    {
+        return JMh;
+    } 
+    float J = Achromatic_n_to_J(Aab[0], p.cz);
+    float M = sqrt(Aab[1] * Aab[1] + Aab[2] * Aab[2]);
+    float h_rad = atan2(Aab[2], Aab[1]);
+    float h = wrap_to_360(radians_to_degrees(h_rad)); 
+
+    JMh[0] = J;
+    JMh[1] = M;
+    JMh[2] = h;
+
+    return JMh;
+}
+
+float[3] RGB_to_JMh(float RGB[3],
+                    JMhParams p)
+{
+    float Aab[3] = RGB_to_Aab(RGB, p);
+    float JMh[3] = Aab_to_JMh(Aab, p);
+    return JMh;
+}
+
+float[3] JMh_to_Aab(float JMh[3],
+                    JMhParams p)
+{
+    float J = JMh[0];
+    float M = JMh[1];
+    float h = JMh[2];
+    float h_rad = degrees_to_radians(h);
+    float cos_hr = cos(h_rad);
+    float sin_hr = sin(h_rad);
+
+    float A = J_to_Achromatic_n(J, p.inv_cz);
+    float a = M * cos_hr;
+    float b = M * sin_hr;
+    float Aab[3] = {A, a, b};
+
+    return Aab;
+}
+
+float[3] Aab_to_RGB(float Aab[3],
+                    JMhParams p)
+{
+    float rgb_a[3] = mult_f3_f33(Aab, p.MATRIX_Aab_to_cone_response);
+
+    float rgb_m[3] = {
+        post_adaptation_cone_response_compression_inv(rgb_a[0]),
+        post_adaptation_cone_response_compression_inv(rgb_a[1]),
+        post_adaptation_cone_response_compression_inv(rgb_a[2])};
+
+    float rgb[3] = mult_f3_f33(rgb_m, p.MATRIX_CAM16_c_to_RGB);
+    return rgb;
+}
+
+float[3] JMh_to_RGB(float JMh[3],
+                    JMhParams p)
+{
+    float Aab[3] = JMh_to_Aab(JMh, p);
+    float rgb[3] = Aab_to_RGB(Aab, p);
+    return rgb;
+}
 float[3] XYZ_to_Hellwig2022_JMh(float XYZ[3],
                                 float XYZ_w[3],
                                 int viewingConditions = 1)
@@ -1062,6 +1226,78 @@ float[3] JMh_to_RGB(float JMh[3],
 bool any_below_zero(float newLimitRGB[3])
 {
     return (newLimitRGB[0] < 0. || newLimitRGB[1] < 0. || newLimitRGB[2] < 0.);
+}
+
+JMhParams init_JMhParams(Chromaticities prims)
+{
+    const float base_cone_response_to_Aab[3][3] = {
+        {2., 1., 1. / 9.},
+        {1., -12. / 11., 1. / 9.},
+        {1. / 20., 1. / 11., -2. / 9.}
+    };
+
+    const float RGB_TO_XYZ[3][3] = RGBtoXYZ_f33(prims, 1.0);
+    const float XYZ_w[3] = mult_f3_f33( f3_from_f(referenceLuminance), RGB_TO_XYZ);
+
+    float Y_w = XYZ_w[1];
+
+    // Step 0 - Converting CIE XYZ tristimulus values to sharpened RGB values
+    float RGB_w[3] = mult_f3_f33(XYZ_w, MATRIX_16);
+
+    // Viewing condition dependent parameters
+    const float k = 1. / (5. * L_A + 1.);
+    const float k4 = k * k * k * k;
+    const float F_L = 0.2 * k4 * (5. * L_A) + 0.1 * pow((1. - k4), 2.) * pow(5. * L_A, 1. / 3.);
+
+    const float F_L_n = F_L / referenceLuminance;
+    const float cz = model_gamma();
+
+    const float D_RGB[3] = {
+        F_L_n * Y_w / RGB_w[0],
+        F_L_n * Y_w / RGB_w[1],
+        F_L_n * Y_w / RGB_w[2]
+    };
+
+    const float RGB_wc[3] = {
+        D_RGB[0] * RGB_w[0],
+        D_RGB[1] * RGB_w[1],
+        D_RGB[2] * RGB_w[2]
+    };
+
+    const float RGB_Aw[3] = { 
+        post_adaptation_cone_response_compression_fwd( RGB_wc[0]), 
+        post_adaptation_cone_response_compression_fwd( RGB_wc[1]),
+        post_adaptation_cone_response_compression_fwd( RGB_wc[2])
+    };        
+
+    float cone_response_to_Aab[3][3] = mult_f33_f33( mult_f_f33(cam_nl_scale, MATRIX_IDENTITY), base_cone_response_to_Aab);
+    float A_w = cone_response_to_Aab[0][0] * RGB_Aw[0] + cone_response_to_Aab[1][0] * RGB_Aw[1] + cone_response_to_Aab[2][0] * RGB_Aw[2];
+    float A_w_J = _post_adaptation_cone_response_compression_fwd(F_L);
+
+    // Prescale the CAM16 LMS responses to directly provide for chromatic adaptation
+    float M1[3][3] = mult_f33_f33( RGBtoXYZ_f33(prims, 1.0), XYZtoRGB_f33(CAM16_PRI, 1.0) );
+    float M2[3][3] = mult_f_f33( referenceLuminance, MATRIX_IDENTITY);
+    float MATRIX_RGB_to_CAM16[3][3] = mult_f33_f33( M1, M2);
+    float MATRIX_RGB_to_CAM16_c[3][3] = mult_f33_f33( MATRIX_RGB_to_CAM16, scale_matrix_diagonal_f33_f3(MATRIX_IDENTITY, D_RGB));
+    
+    float MATRIX_cone_response_to_Aab[3][3] = {
+        {cone_response_to_Aab[0][0] / A_w, cone_response_to_Aab[0][1] * 43. * surround[2], cone_response_to_Aab[0][2] * 43. * surround[2]},
+        {cone_response_to_Aab[1][0] / A_w, cone_response_to_Aab[1][1] * 43. * surround[2], cone_response_to_Aab[1][2] * 43. * surround[2]},
+        {cone_response_to_Aab[2][0] / A_w, cone_response_to_Aab[2][1] * 43. * surround[2], cone_response_to_Aab[2][2] * 43. * surround[2]}
+    };
+
+    JMhParams p;
+    p.MATRIX_RGB_to_CAM16_c = MATRIX_RGB_to_CAM16_c;
+    p.MATRIX_CAM16_c_to_RGB = invert_f33( MATRIX_RGB_to_CAM16_c);
+    p.MATRIX_cone_response_to_Aab = MATRIX_cone_response_to_Aab;
+    p.MATRIX_Aab_to_cone_response = invert_f33( MATRIX_cone_response_to_Aab);
+    p.F_L_n = F_L_n;
+    p.cz = cz;
+    p.inv_cz = 1. / cz;
+    p.A_w_J = A_w_J;
+    p.inv_A_w_J = 1. / A_w_J;
+
+    return p;
 }
 
 float[totalTableSize][3] make_gamut_table(Chromaticities C,
