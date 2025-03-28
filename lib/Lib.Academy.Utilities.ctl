@@ -74,7 +74,7 @@ float[3] clamp_f3( float in[3],
     return out;
 }
 
-float[3]  f3_from_f( float a)
+float[3] f3_from_f( float a)
 {
     float f3[3] = {a, a, a};
     return f3;
@@ -182,6 +182,15 @@ float[3] vector_dot( float m[3][3], float v[3] )
 	return r;
 }
 
+float[3][3] scale_matrix_diagonal_f33_f3(float A[3][3],
+                                         float v[3])
+{
+    float B[3][3] = A;
+    B[0][0] = A[0][0] * v[0];
+    B[1][1] = A[1][1] * v[1];
+    B[2][2] = A[2][2] * v[2];
+    return B;
+}
 
 // linear interpolation between two values a & b with the bias t
 float lerp( float a, float b, float t )
