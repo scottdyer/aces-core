@@ -325,50 +325,15 @@ float[3] JMh_to_RGB(float JMh[3],
     return rgb;
 }
 
-float[3] clamp_XYZ_to_AP1(float XYZ[3],
+float[3] clamp_AP0_to_AP1(float aces[3],
+                          float clamp_lower_limit,
                           float clamp_upper_limit)
 {
-    float ap1[3] = mult_f3_f33(XYZ, AP1_XYZ_TO_RGB);
-    float ap1_clamped[3] = clamp_f3(ap1, 0., clamp_upper_limit);
-    float XYZ_clamped[3] = mult_f3_f33(ap1_clamped, invert_f33(AP1_XYZ_TO_RGB));
+    float AP1[3] = mult_f3_f33(aces, AP0_TO_AP1);
+    float AP1_clamped[3] = clamp_f3(AP1, clamp_lower_limit, clamp_upper_limit);
+    float AP0_clamped[3] = mult_f3_f33(AP1_clamped, AP1_TO_AP0);
 
-    return XYZ_clamped;
-}
-
-float[3] aces_to_JMh(float aces[3],
-                     ODTParams PARAMS)
-{
-    // AP0 to XYZ
-    float XYZ[3] = mult_f3_f33(aces, AP0_RGB_TO_XYZ);
-
-    // Clamp to AP1 at forward_limit
-    XYZ = clamp_XYZ_to_AP1(XYZ, PARAMS.forward_limit);
-
-    // XYZ to JMh
-    float RGB_w[3] = {referenceLuminance, referenceLuminance, referenceLuminance};
-    float XYZ_w[3] = mult_f3_f33(RGB_w, AP0_RGB_TO_XYZ);
-
-    float XYZluminance[3] = mult_f_f3(referenceLuminance, XYZ);
-    float JMh[3] = XYZ_to_Hellwig2022_JMh(XYZluminance, XYZ_w);
-
-    return JMh;
-}
-
-float[3] JMh_to_aces(float JMh[3],
-                     float peakLuminance)
-{
-    const float RGB_w[3] = {referenceLuminance, referenceLuminance, referenceLuminance};
-    float XYZ_w_aces[3] = mult_f3_f33(RGB_w, AP0_RGB_TO_XYZ);
-
-    // JMh to XYZ
-    float XYZluminance[3] = Hellwig2022_JMh_to_XYZ(JMh, XYZ_w_aces);
-
-    float XYZ[3] = mult_f_f3(1. / referenceLuminance, XYZluminance);
-
-    // XYZ to ACES
-    float ACES[3] = mult_f3_f33(XYZ, AP0_XYZ_TO_RGB);
-
-    return ACES;
+    return AP0_clamped;
 }
 
 float[3] JMh_to_output_XYZ(float JMh[3],
@@ -1377,55 +1342,31 @@ ODTParams init_ODTParams(float peakLuminance,
 }
 
 float[3] outputTransform_fwd(float aces[3],
-                             float peakLuminance,
-                             ODTParams PARAMS,
-                             Chromaticities limitingPri,
-                             float GAMUT_CUSP_TABLE[][3],
-                             float GAMUT_TOP_GAMMA[],
-                             float REACHM_TABLE[])
+                             ODTParams p)
 {
-    float JMh[3] = aces_to_JMh(aces,
-                               PARAMS);
+    float AP0_clamped[3] = clamp_AP0_to_AP1( aces, 0., p.ts.forward_limit);
 
-    float tonemappedJMh[3] = tonemapAndCompress_fwd(JMh,
-                                                    PARAMS,
-                                                    REACHM_TABLE);
+    float JMh[3] = RGB_to_JMh(AP0_clamped, p.input_params);
 
-    float compressedJMh[3] = gamutMap_fwd(tonemappedJMh,
-                                          PARAMS,
-                                          GAMUT_CUSP_TABLE,
-                                          GAMUT_TOP_GAMMA,
-                                          REACHM_TABLE);
+    float tonemappedJMh[3] = tonemap_and_compress_fwd(JMh, p);
 
-    float XYZ[3] = JMh_to_output_XYZ(compressedJMh,
-                                     PARAMS);
+    float compressedJMh[3] = gamut_compress_fwd(tonemappedJMh,p);
 
-    return XYZ;
+    float RGBout[3] = JMh_to_RGB(compressedJMh, p.limit_params);
+
+    return RGBout;
 }
 
-float[3] outputTransform_inv(float XYZ[3],
-                             float peakLuminance,
-                             ODTParams PARAMS,
-                             Chromaticities limitingPri,
-                             float GAMUT_CUSP_TABLE[][3],
-                             float GAMUT_TOP_GAMMA[],
-                             float REACHM_TABLE[])
+float[3] outputTransform_inv(float RGBout[3],
+                             ODTParams p)
 {
-    float compressedJMh[3] = XYZ_output_to_JMh(XYZ,
-                                               PARAMS);
+    float compressedJMh[3] = RGB_to_JMh(RGBout, p.limit_params);
 
-    float tonemappedJMh[3] = gamutMap_inv(compressedJMh,
-                                          PARAMS,
-                                          GAMUT_CUSP_TABLE,
-                                          GAMUT_TOP_GAMMA,
-                                          REACHM_TABLE);
+    float tonemappedJMh[3] = gamut_compress_inv(compressedJMh, p);
 
-    float JMh[3] = tonemapAndCompress_inv(tonemappedJMh,
-                                          PARAMS,
-                                          REACHM_TABLE);
+    float JMh[3] = tonemap_and_compress_inv(tonemappedJMh, p);
 
-    float aces[3] = JMh_to_aces(JMh,
-                                peakLuminance);
+    float aces[3] = JMh_to_RGB(JMh, p.input_params);
 
     return aces;
 }
