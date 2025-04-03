@@ -178,32 +178,8 @@ float base_hue_for_position(int i_lo, int table_size)
     return result;
 }
 
+
 // CAM Functions
-float[3] post_adaptation_non_linear_response_compression_forward(float RGB[3], float F_L)
-{
-    float F_L_RGB[3];
-    F_L_RGB[0] = spow(F_L * fabs(RGB[0]) / 100., 0.42);
-    F_L_RGB[1] = spow(F_L * fabs(RGB[1]) / 100., 0.42);
-    F_L_RGB[2] = spow(F_L * fabs(RGB[2]) / 100., 0.42);
-
-    float RGB_c[3];
-    RGB_c[0] = (400. * copysign(1., RGB[0]) * F_L_RGB[0]) / (27.13 + F_L_RGB[0]);
-    RGB_c[1] = (400. * copysign(1., RGB[1]) * F_L_RGB[1]) / (27.13 + F_L_RGB[1]);
-    RGB_c[2] = (400. * copysign(1., RGB[2]) * F_L_RGB[2]) / (27.13 + F_L_RGB[2]);
-
-    return RGB_c;
-}
-
-float[3] post_adaptation_non_linear_response_compression_inverse(float RGB[3], float F_L)
-{
-    float RGB_p[3];
-    RGB_p[0] = (sign(RGB[0]) * 100. / F_L * spow((27.13 * fabs(RGB[0])) / (400. - fabs(RGB[0])), 1.0 / 0.42));
-    RGB_p[1] = (sign(RGB[1]) * 100. / F_L * spow((27.13 * fabs(RGB[1])) / (400. - fabs(RGB[1])), 1.0 / 0.42));
-    RGB_p[2] = (sign(RGB[2]) * 100. / F_L * spow((27.13 * fabs(RGB[2])) / (400. - fabs(RGB[2])), 1.0 / 0.42));
-
-    return RGB_p;
-}
-
 float _post_adaptation_cone_response_compression_fwd(float Rc)
 {
     const float F_L_Y = pow(Rc, 0.42);
@@ -253,25 +229,19 @@ float _A_to_Y(float A,
     return Y;
 }
 
-float _J_to_Y(float abs_J,
-              JMhParams p)
+float J_to_Y(float J,
+             JMhParams p)
 {
+    float abs_J = fabs(J);
     return _A_to_Y(J_to_Achromatic_n(abs_J, p.inv_cz), p);
-}
-
-float _Y_to_J(float abs_Y,
-              JMhParams p)
-{
-    float Ra = _post_adaptation_cone_response_compression_fwd(abs_Y * p.F_L_n);
-    float J = Achromatic_n_to_J(Ra * p.inv_A_w_J, p.cz);
-    return J;
 }
 
 float Y_to_J(float Y,
              JMhParams p)
 {
     float abs_Y = fabs(Y);
-    float J = _Y_to_J(abs_Y, p);
+    float Ra = _post_adaptation_cone_response_compression_fwd(abs_Y * p.F_L_n);
+    float J = Achromatic_n_to_J(Ra * p.inv_A_w_J, p.cz);
     return copysign(J, Y);
 }
 
@@ -286,6 +256,7 @@ float[3] RGB_to_Aab(float RGB[3],
         post_adaptation_cone_response_compression_fwd(rgb_m[2])};
 
     float Aab[3] = mult_f3_f33(rgb_a, p.MATRIX_cone_response_to_Aab);
+
     return Aab;
 }
 
@@ -314,6 +285,7 @@ float[3] RGB_to_JMh(float RGB[3],
 {
     float Aab[3] = RGB_to_Aab(RGB, p);
     float JMh[3] = Aab_to_JMh(Aab, p);
+
     return JMh;
 }
 
