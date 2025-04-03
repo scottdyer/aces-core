@@ -113,40 +113,36 @@ struct ODTParams
 {
     float peakLuminance;
 
-    // Tonescale                // Set via TSParams structure
-    float n_r; // normalized white in nits (what 1.0 should be)
-    float g;   // surround / contrast
-    float t_1; // shadow toe or flare/glare compensation
-    float c_t;
-    float s_2;
-    float u_2;
-    float m_2;
-    float forward_limit;
-    float inverse_limit;
-    float log_peak;
+    // JMh parameters
+    JMhParams input_params;
+    JMhParams reach_params;
+    JMhParams limit_params;
 
-    // Chroma Compression
-    float limitJmax;
-    float midJ;
-    float model_gamma;
+    // Tonescale parameters
+    TSParams ts;
+
+    // Shared compression parameters
+    float limit_J_max;
+    float model_gamma_inv;
+    float TABLE_reach_M[totalTableSize];
+
+    // Chroma compression parameters
     float sat;
     float sat_thr;
     float compr;
-    float chromaCompressScale;
+    float chroma_compress_scale;
 
-    float focusDist;
+    // Gamut compression parameters
+    float mid_J;
+    float focus_dist;
+    float lower_hull_gamma_inv;
+    float TABLE_hues[totalTableSize];
+    float TABLE_gamut_cusps[totalTableSize][3];
+    float TABLE_upper_hull_gamma[totalTableSize];
+    int hue_linearity_search_range[2];
 
-    // Limit
-    float LIMIT_RGB_TO_XYZ[3][3];
-    float LIMIT_XYZ_TO_RGB[3][3];
+    // Parameters passed to display encoding
     float XYZ_w_limit[3];
-
-    // Output
-    float OUTPUT_RGB_TO_XYZ[3][3];
-    float OUTPUT_XYZ_TO_RGB[3][3];
-    float XYZ_w_output[3];
-
-    float lowerHullGamma;
 };
 
 float wrap_to_360(float hue)
@@ -1321,100 +1317,63 @@ ODTParams init_ODTParams(
     float limitJmax = Y_to_Hellwig_J(peakLuminance);
     float midJ = Y_to_Hellwig_J(TSPARAMS.c_t * 100.);
 
-    const Chromaticities INPUT_PRI = // equal to ACES "AP0" primaries
-        {
-            {0.73470, 0.26530},
-            {0.00000, 1.00000},
-            {0.00010, -0.07700},
-            {0.32168, 0.33767}};
+    return hue_linearity_search_range;
+}
 
-    // Chroma compress presets
-    const float chroma_compress = 2.4;
-    const float chroma_compress_fact = 3.3;
-    const float chroma_expand = 1.3;
-    const float chroma_expand_fact = 0.69;
-    const float chroma_expand_thr = 0.5;
+ODTParams init_ODTParams(float peakLuminance,
+                         Chromaticities limitingPrimaries)
+{
+    ODTParams p;
 
-    // Calculated chroma compress variables
-    const float log_peak = TSPARAMS.log_peak;
-    const float compr = chroma_compress + (chroma_compress * chroma_compress_fact) * log_peak;
-    const float sat = max(0.2, chroma_expand - (chroma_expand * chroma_expand_fact) * log_peak);
-    const float sat_thr = chroma_expand_thr / TSPARAMS.n;
-    const float chromaCompressScale = pow(0.03379 * TSPARAMS.n, 0.30596) - 0.45135;
+    p.peakLuminance = peakLuminance;
 
-    const float surround[3] = viewingConditionsToSurround(viewingConditions);
-    const float model_gamma = 1. / (surround[1] * (1.48 + sqrt(Y_b / L_A)));
+    // JMh parameters
+    p.input_params = init_JMhParams( AP0);
+    p.reach_params = init_JMhParams( REACH_PRI);
+    p.limit_params = init_JMhParams( limitingPrimaries);
 
-    const float focusDist = focusDistance +
-                            focusDistance * focusDistanceScaling * log_peak;
+    // print("input:\n");
+    // print_f33( transpose_f33(p.input_params.MATRIX_RGB_to_CAM16_c));
+    // print_f33( transpose_f33(p.input_params.MATRIX_cone_response_to_Aab));
+    // print("reach:\n");
+    // print_f33( transpose_f33(p.reach_params.MATRIX_RGB_to_CAM16_c));
+    // print("limit:\n");
+    // print_f33( transpose_f33(p.limit_params.MATRIX_RGB_to_CAM16_c));
 
-    const float RGB_w[3] = {100., 100., 100.};
+    // Tonescale parameters
+    p.ts = init_TSParams(peakLuminance);
+    
+    // Shared compression paramters
+    p.limit_J_max = Y_to_J( peakLuminance, p.input_params);
+    p.model_gamma_inv = 1. / model_gamma;
+    p.TABLE_reach_M = make_reach_m_table( p.reach_params, p.limit_J_max);
 
-    // Input Primaries (AP0)
-    const float INPUT_RGB_TO_XYZ[3][3] = RGBtoXYZ_f33(INPUT_PRI, 1.0);
-    const float INPUT_XYZ_TO_RGB[3][3] = XYZtoRGB_f33(INPUT_PRI, 1.0);
-    float XYZ_w_in[3] = mult_f3_f33(RGB_w, INPUT_RGB_TO_XYZ);
+    // Chroma compression parameters
+    p.sat = max(0.2, chroma_expand - (chroma_expand * chroma_expand_fact) * p.ts.log_peak);
+    p.sat_thr = chroma_expand_thr / peakLuminance;
+    p.compr = chroma_compress + (chroma_compress * chroma_compress_fact) * p.ts.log_peak;
+    p.chroma_compress_scale = pow(0.03379 * peakLuminance, 0.30596) - 0.45135;
 
-    const float lowerHullGamma = 1.14 + 0.07 * log_peak;
+    // Gamut compression parameters
+    p.mid_J = Y_to_J(p.ts.c_t * referenceLuminance, p.input_params);
+    p.focus_dist = focus_distance + focus_distance * focus_distance_scaling * p.ts.log_peak;
+    const float lower_hull_gamma = 1.14 + 0.07 * p.ts.log_peak;
+    p.lower_hull_gamma_inv = 1. / lower_hull_gamma;
+    p.TABLE_gamut_cusps = make_uniform_hue_gamut_table(p.reach_params, p.limit_params, p);
+    for (int i = 0; i != totalTableSize; i = i + 1)
+    {
+        p.TABLE_hues[i] = p.TABLE_gamut_cusps[i][2];
+    }
+    p.TABLE_upper_hull_gamma = make_upper_hull_gamma_table(p.TABLE_gamut_cusps, p);
+    p.hue_linearity_search_range = determine_hue_linearity_search_range(p.TABLE_hues);
 
-    // Limiting Primaries
-    const float LIMIT_RGB_TO_XYZ[3][3] = RGBtoXYZ_f33(limitingPrimaries, 1.0);
-    const float LIMIT_XYZ_TO_RGB[3][3] = XYZtoRGB_f33(limitingPrimaries, 1.0);
-    float XYZ_w_limit[3] = mult_f3_f33(RGB_w, LIMIT_RGB_TO_XYZ);
+    // Parameters passed to display encoding
+    float RGB_w[3] = f3_from_f( 100.);
+    p.XYZ_w_limit = mult_f3_f33(RGB_w, XYZtoRGB_f33(limitingPrimaries, 1.0) );
 
-    // Output / Encoding Primaries
-    const float OUTPUT_RGB_TO_XYZ[3][3] = RGBtoXYZ_f33(encodingPrimaries, 1.0);
-    const float OUTPUT_XYZ_TO_RGB[3][3] = XYZtoRGB_f33(encodingPrimaries, 1.0);
-    float XYZ_w_output[3] = mult_f3_f33(RGB_w, OUTPUT_RGB_TO_XYZ);
+    // print("hlsr: ", p.hue_linearity_search_range[0], ", ", p.hue_linearity_search_range[1], "\n");
 
-    const ODTParams ODTPARAMS = {
-        peakLuminance,
-
-        // Tonescale
-        TSPARAMS.n_r, // normalized white in nits (what 1.0 should be)
-        TSPARAMS.g,   // surround / contrast
-        TSPARAMS.t_1,
-        TSPARAMS.c_t,
-        TSPARAMS.s_2,
-        TSPARAMS.u_2,
-        TSPARAMS.m_2,
-        TSPARAMS.forward_limit,
-        TSPARAMS.inverse_limit,
-        TSPARAMS.log_peak,
-
-        // Chroma Compression
-        limitJmax,
-        midJ,
-        model_gamma,
-        sat,
-        sat_thr,
-        compr,
-        chromaCompressScale,
-
-        focusDist,
-
-        // Limit
-        {{LIMIT_RGB_TO_XYZ[0][0], LIMIT_RGB_TO_XYZ[0][1], LIMIT_RGB_TO_XYZ[0][2]},
-         {LIMIT_RGB_TO_XYZ[1][0], LIMIT_RGB_TO_XYZ[1][1], LIMIT_RGB_TO_XYZ[1][2]},
-         {LIMIT_RGB_TO_XYZ[2][0], LIMIT_RGB_TO_XYZ[2][1], LIMIT_RGB_TO_XYZ[2][2]}},
-        {{LIMIT_XYZ_TO_RGB[0][0], LIMIT_XYZ_TO_RGB[0][1], LIMIT_XYZ_TO_RGB[0][2]},
-         {LIMIT_XYZ_TO_RGB[1][0], LIMIT_XYZ_TO_RGB[1][1], LIMIT_XYZ_TO_RGB[1][2]},
-         {LIMIT_XYZ_TO_RGB[2][0], LIMIT_XYZ_TO_RGB[2][1], LIMIT_XYZ_TO_RGB[2][2]}},
-        {XYZ_w_limit[0], XYZ_w_limit[1], XYZ_w_limit[2]},
-
-        // Output
-        {{OUTPUT_RGB_TO_XYZ[0][0], OUTPUT_RGB_TO_XYZ[0][1], OUTPUT_RGB_TO_XYZ[0][2]},
-         {OUTPUT_RGB_TO_XYZ[1][0], OUTPUT_RGB_TO_XYZ[1][1], OUTPUT_RGB_TO_XYZ[1][2]},
-         {OUTPUT_RGB_TO_XYZ[2][0], OUTPUT_RGB_TO_XYZ[2][1], OUTPUT_RGB_TO_XYZ[2][2]}},
-        {{OUTPUT_XYZ_TO_RGB[0][0], OUTPUT_XYZ_TO_RGB[0][1], OUTPUT_XYZ_TO_RGB[0][2]},
-         {OUTPUT_XYZ_TO_RGB[1][0], OUTPUT_XYZ_TO_RGB[1][1], OUTPUT_XYZ_TO_RGB[1][2]},
-         {OUTPUT_XYZ_TO_RGB[2][0], OUTPUT_XYZ_TO_RGB[2][1], OUTPUT_XYZ_TO_RGB[2][2]}},
-        {XYZ_w_output[0], XYZ_w_output[1], XYZ_w_output[2]},
-
-        lowerHullGamma // lowerHullGamma
-    };
-
-    return ODTPARAMS;
+    return p;
 }
 
 float[3] outputTransform_fwd(float aces[3],
