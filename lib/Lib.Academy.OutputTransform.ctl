@@ -53,13 +53,13 @@ const int max_sorted_corners = 2 * cuspCornerCount;
 const float reach_cusp_tolerance = 1e-3;
 const float display_cusp_tolerance = 1e-7;
 
-const float gammaMinimum = 0.0;
-const float gammaMaximum = 5.0;
-const float gammaSearchStep = 0.4;
-const float gammaAccuracy = 1e-5;
+const float gamma_minimum = 0.0;
+const float gamma_maximum = 5.0;
+const float gamma_search_step = 0.4;
+const float gamma_accuracy = 1e-5;
 
 // CAM Parameters
-const float referenceLuminance = 100.;
+const float ref_luminance = 100.;
 const float L_A = 100.;
 const float Y_b = 20.;
 const float surround[3] = {0.9, 0.59, 0.9}; // Dim surround
@@ -69,7 +69,7 @@ const float cam_nl_Y_reference = 100.0;
 const float cam_nl_offset = 0.2713 * cam_nl_Y_reference;
 const float cam_nl_scale = 4.0 * cam_nl_Y_reference;
 
-const float model_gamma = surround[1] * (1.48 + sqrt(Y_b / referenceLuminance));
+const float model_gamma = surround[1] * (1.48 + sqrt(Y_b / ref_luminance));
 
 // Chroma compression
 const float chroma_compress = 2.4;
@@ -79,16 +79,16 @@ const float chroma_expand_fact = 0.69;
 const float chroma_expand_thr = 0.5;
 
 // Gamut compression
-const float smoothCusps = 0.12;
-const float smoothM = 0.27;
-const float cuspMidBlend = 1.3;
+const float smooth_cusps = 0.12;
+const float smooth_m = 0.27;
+const float cusp_mid_blend = 1.3;
 
-const float focusGainBlend = 0.3;
-const float focusAdjustGain = 0.55;
-const float focusDistance = 1.35;
-const float focusDistanceScaling = 1.75;
+const float focus_gain_blend = 0.3;
+const float focus_adjust_gain = 0.55;
+const float focus_distance = 1.35;
+const float focus_distance_scaling = 1.75;
 
-const float compressionThreshold = 0.75;
+const float compression_threshold = 0.75;
 
 const float MATRIX_IDENTITY[3][3] = {
     {1., 0, 0},
@@ -98,15 +98,26 @@ const float MATRIX_IDENTITY[3][3] = {
 
 struct JMhParams
 {
+    // Pre-computed conversion matrices and constants for conversions to/from JMh
     float MATRIX_RGB_to_CAM16_c[3][3];
     float MATRIX_CAM16_c_to_RGB[3][3];
     float MATRIX_cone_response_to_Aab[3][3];
     float MATRIX_Aab_to_cone_response[3][3];
-    float F_L_n;    // F_L normalised
+    float F_L_n;     // F_L normalised
     float cz;
-    float inv_cz;   // 1/cz
+    float inv_cz;    // 1/cz
     float A_w_J;
     float inv_A_w_J; // 1/A_w_J
+};
+
+struct HueDependentGamutParams
+{
+    // Hue-dependent gamut parameters
+    float JMcusp[2];
+    float gamma_bottom_inv;
+    float gamma_top_inv;
+    float focus_J;
+    float analytical_threshold;
 };
 
 struct ODTParams
@@ -158,7 +169,7 @@ float wrap_to_360(float hue)
 int hue_position_in_uniform_table(float hue, int table_size)
 {
     const float wrapped_hue = wrap_to_360(hue);
-    int result = (wrapped_hue / 360. * table_size);
+    int result = (wrapped_hue / hue_limit * table_size);
     return result;
 }
 
@@ -170,7 +181,7 @@ int next_position_in_table(int entry, int table_size)
 
 float base_hue_for_position(int i_lo, int table_size)
 {
-    float result = i_lo * 360. / table_size;
+    float result = i_lo * hue_limit / table_size;
     return result;
 }
 
@@ -361,54 +372,9 @@ float reinhard_remap(float scale,
     return scale * nd / (1. + nd);
 }
 
-int midpoint(int low, int high)
+float midpoint(float low, float high)
 {
-    return (low + high) / 2;
-}
-
-float[2] cuspFromTable(float h,
-                       float table[][3])
-{
-    float lo[3];
-    float hi[3];
-
-    int low_i = 0;
-    int high_i = baseIndex + gamutTableSize; // allowed as we have an extra entry in the table
-    int i = hue_position_in_uniform_table(h, gamutTableSize) + baseIndex;
-
-    while (low_i + 1 < high_i)
-    {
-        if (h > table[i][2])
-        {
-            low_i = i;
-        }
-        else
-        {
-            high_i = i;
-        }
-        i = midpoint(low_i, high_i);
-    }
-    lo = table[high_i - 1];
-    hi = table[high_i];
-
-    float t = (h - lo[2]) / (hi[2] - lo[2]);
-    float cuspJ = lerp(lo[0], hi[0], t);
-    float cuspM = lerp(lo[1], hi[1], t);
-
-    float cuspJM[2] = {cuspJ, cuspM};
-
-    return cuspJM;
-}
-
-float reachMFromTable(float h,
-                      float table[])
-{
-    int i_lo = hue_position_in_uniform_table(h, table.size);
-    int i_hi = next_position_in_table(i_lo, table.size);
-
-    float t = (h - i_lo) / (i_hi - i_lo);
-
-    return lerp(table[i_lo], table[i_hi], t);
+    return (low + high) / 2.;
 }
 
 // A "toe" function that remaps the given value x between 0 and limit.
@@ -439,16 +405,9 @@ float toe(float x,
     }
 }
 
-// Chroma compression
-//
-// Compresses colors inside the gamut with the aim for colorfulness to have an
-// appropriate rate of change from display black to display white, and from
-// achromatic outward to purer colors.
-//
-float chromaCompressionNorm(float h,
-                            ODTParams PARAMS)
+float chroma_compress_norm(float h,
+                           float chroma_compress_scale)
 {
-
     float hr = degrees_to_radians(h);
 
     float a = cos(hr);
@@ -466,7 +425,7 @@ float chromaCompressionNorm(float h,
               9.19364 * sin_hr3 +
               77.12896;
 
-    return M * PARAMS.chromaCompressScale;
+    return M * chroma_compress_scale;
 }
 
 // In-gamut chroma compression
@@ -474,132 +433,140 @@ float chromaCompressionNorm(float h,
 // Compresses colors inside the gamut with the aim for colorfulness to have an
 // appropriate rate of change from display black to display white, and from
 // achromatic outward to purer colors.
-float chromaCompression(float JMh[3],
-                        float origJ,
-                        ODTParams PARAMS,
-                        float REACHM_TABLE[],
-                        bool invert = false)
+float[3] chroma_compress_fwd(float JMh[3],
+                             float tonemapped_J,
+                             ODTParams p,
+                             bool invert = false)
 {
     float J = JMh[0];
     float M = JMh[1];
     float h = JMh[2];
 
-    if (M == 0.0)
-    {
-        return M;
-    }
+    float M_compr = M;
 
-    float nJ = J / PARAMS.limitJmax;
-    float snJ = max(0., 1. - nJ);
-    float Mnorm = chromaCompressionNorm(h, PARAMS);
-    float limit = pow(nJ, PARAMS.model_gamma) * reachMFromTable(h, REACHM_TABLE) / Mnorm;
-
-    float toe_limit = limit - 0.001;
-    float toe_snJ_sat = snJ * PARAMS.sat;
-    float toe_sqrt_nJ_sat_thr = sqrt(nJ * nJ + PARAMS.sat_thr);
-    float toe_nJ_compr = nJ * PARAMS.compr;
-
-    if (!invert) { // Forward chroma compression
+    if (M != 0.0) {
+        const float nJ = tonemapped_J / p.limit_J_max;
+        const float snJ = max(0., 1. - nJ);
+        float Mnorm = chroma_compress_norm(h, p.chroma_compress_scale);
+        float limit = pow(nJ, p.model_gamma_inv) * reach_M_from_table(h, p.TABLE_reach_M) / Mnorm;
+    
+        float toe_limit = limit - 0.001;
+        float toe_snJ_sat = snJ * p.sat;
+        float toe_sqrt_nJ_sat_thr = sqrt(nJ * nJ + p.sat_thr);
+        float toe_nJ_compr = nJ * p.compr;
+     
         // Rescaling of M with the tonescaled J to get the M to the same range as
         // J after the tonescale.  The rescaling uses the Hellwig2022 model gamma to
         // keep the M/J ratio correct (keeping the chromaticities constant).
-        M = M * pow(J / origJ, PARAMS.model_gamma);
+        M_compr = M * pow(tonemapped_J / J, p.model_gamma_inv);
 
         // Normalize M with the rendering space cusp M
-        M = M / Mnorm;
+        M_compr = M_compr / Mnorm;
 
         // Expand the colorfulness by running the toe function in reverse.  The goal is to
         // expand less saturated colors less and more saturated colors more.  The expansion
         // increases saturation in the shadows and mid-tones but not in the highlights.
         // The 0.001 offset starts the expansions slightly above zero.  The sat_thr makes
         // the toe less aggressive near black to reduce the expansion of noise.
-        M = limit - toe(limit - M,
-                        toe_limit,
-                        toe_snJ_sat,
-                        toe_sqrt_nJ_sat_thr,
-                        false);
+        M_compr = limit - toe(limit - M_compr, toe_limit, toe_snJ_sat, toe_sqrt_nJ_sat_thr, false);
 
         // Compress the colorfulness.  The goal is to compress less saturated colors more and
         // more saturated colors less, especially in the highlights.  This step creates the
         // saturation roll-off in the highlights, but attemps to preserve pure colors.  This
         // mostly affects highlights and mid-tones, and does not compress shadows.
-        M = toe(M,
-                limit,
-                toe_nJ_compr,
-                snJ,
-                false);
+        M_compr = toe(M_compr, limit, toe_nJ_compr, snJ, false);
 
         // Denormalize
-        M = M * Mnorm;
+        M_compr = M_compr * Mnorm;
     }
-    else
+
+    float out[3] = {tonemapped_J, M_compr, h};
+    return out;
+}
+
+float[3] chroma_compress_inv(float JMh[3],
+                             float J,
+                             ODTParams p,
+                             bool invert = false)
+{
+    float tonemapped_J = JMh[0];
+    float M_compr = JMh[1];
+    float h = JMh[2];
+
+    float M = M_compr;
+
+    if (M_compr != 0.0)
     {
-        M = M / Mnorm;
-        M = toe(M,
-                limit,
-                toe_nJ_compr,
-                snJ,
-                true);
-        M = limit - toe(limit - M,
-                        toe_limit,
-                        toe_snJ_sat,
-                        toe_sqrt_nJ_sat_thr,
-                        true);
+        const float nJ = tonemapped_J / p.limit_J_max;
+        const float snJ = max(0., 1. - nJ);
+        float Mnorm = chroma_compress_norm(h, p.chroma_compress_scale);
+        float limit = pow(nJ, p.model_gamma_inv) * reach_M_from_table(h, p.TABLE_reach_M) / Mnorm;
+    
+        float toe_limit = limit - 0.001;
+        float toe_snJ_sat = snJ * p.sat;
+        float toe_sqrt_nJ_sat_thr = sqrt(nJ * nJ + p.sat_thr);
+        float toe_nJ_compr = nJ * p.compr;
+
+        M = M_compr / Mnorm;
+        M = toe(M, limit, toe_nJ_compr, snJ, true);
+        M = limit - toe(limit - M, toe_limit, toe_snJ_sat, toe_sqrt_nJ_sat_thr, true);
         M = M * Mnorm;
-        M = M * pow(J / origJ, -PARAMS.model_gamma);
+        M = M * pow(tonemapped_J / J, -p.model_gamma_inv);
     }
 
-    return M;
+    float out[3] = { J, M, h};
+    return out;
 }
 
-float[3] tonemapAndCompress_fwd(float inputJMh[3],
-                                ODTParams PARAMS,
-                                float REACHM_TABLE[])
+float[3] tonemap_and_compress_fwd(float JMh[3],
+                                  ODTParams p)
 {
-    float outputJMh[3];
+    // Applies the forward tonescale, then compresses M based on J and tonemapped J
 
-    float linear = Hellwig_J_to_Y(inputJMh[0]) / referenceLuminance;
+    // Tonemap
+    float linear = J_to_Y(JMh[0], p.input_params) / ref_luminance;
 
-    TSParams TSPARAMS = init_TSParams(PARAMS.peakLuminance);
-    float luminanceTS = tonescale_fwd(linear, TSPARAMS);
+    float tonemapped_Y = tonescale_fwd(linear, p.ts);
 
-    float tonemappedJ = Y_to_Hellwig_J(luminanceTS);
+    float J_ts = Y_to_J(tonemapped_Y, p.input_params);
 
-    float tonemappedJMh[3] = {tonemappedJ, inputJMh[1], inputJMh[2]};
+    // print("tonemapped_J (before chroma Compress):\n\t",J_ts,"\n");
+    // Compress M; function returns { tonemapped J, compressed M, h }
+    float JMh_tc[3] = chroma_compress_fwd(JMh, J_ts, p, false);
 
-    outputJMh = tonemappedJMh;
-    outputJMh[1] = chromaCompression(outputJMh,
-                                     inputJMh[0],
-                                     PARAMS,
-                                     REACHM_TABLE,
-                                     false);
-
-    return outputJMh;
+    return JMh_tc;
 }
 
-float[3] tonemapAndCompress_inv(float JMh[3],
-                                ODTParams PARAMS,
-                                float REACHM_TABLE[])
+float[3] tonemap_and_compress_inv(float JMh_tc[3],
+                                  ODTParams p)
 {
-    float tonemappedJMh[3] = JMh;
+    // Applies the inverse tonescale, then uncompresses M based on tonemapped J and J
 
-    float luminance = Hellwig_J_to_Y(JMh[0]);
+    // Un-tonemap
+    float luminance = J_to_Y(JMh_tc[0], p.input_params);
 
-    TSParams TSPARAMS = init_TSParams(PARAMS.peakLuminance);
-    float linear = tonescale_inv(luminance / referenceLuminance,
-                                 TSPARAMS);
+    float linear = tonescale_inv(luminance / ref_luminance, p.ts);
 
-    float untonemappedJ = Y_to_Hellwig_J(linear * referenceLuminance);
-    float untonemappedColorJMh[3] = {untonemappedJ, tonemappedJMh[1], tonemappedJMh[2]};
+    float J = Y_to_J(linear * ref_luminance, p.input_params);
+ 
+    // Un-compress M; function returns { J, M, h }
+    float JMh[3] = chroma_compress_inv(JMh_tc, J, p, true);
 
-    // Chroma compression
-    untonemappedColorJMh[1] = chromaCompression(tonemappedJMh,
-                                                untonemappedColorJMh[0],
-                                                PARAMS,
-                                                REACHM_TABLE,
-                                                true);
+    return JMh;
+}
 
-    return untonemappedColorJMh;
+float compute_compression_vector_slope(float intersect_J,
+                                       float focus_J,
+                                       float limit_J_max,
+                                       float slope_gain)
+{
+    float direction_scalar;
+    if (intersect_J < focus_J) {
+        direction_scalar = intersect_J;
+    } else {
+        direction_scalar = limit_J_max - intersect_J;
+    }
+    return direction_scalar * (intersect_J - focus_J) / (focus_J * slope_gain);
 }
 
 float solve_J_intersect(float J,
@@ -608,146 +575,208 @@ float solve_J_intersect(float J,
                         float maxJ,
                         float slope_gain)
 {
-    float a = M / (focusJ * slope_gain);
-    float b = 0.0;
-    float c = 0.0;
-    float intersectJ = 0.0;
+    const float M_scaled = M / slope_gain;
+    const float a = M_scaled / focusJ;
 
     if (J < focusJ)
     {
-        b = 1.0 - M / slope_gain;
+        const float b = 1. - M_scaled;
+        const float c = -J;
+        const float det = b * b - 4. * a * c;
+        const float root = sqrt(det);
+        return -2. * c / (b + root);
     }
     else
     {
-        b = -(1.0 + M / slope_gain + maxJ * M / (focusJ * slope_gain));
+        const float b = -(1. + M_scaled + maxJ * a);
+        const float c = maxJ * M_scaled + J;
+        const float det = b * b - 4. * a * c;
+        const float root = sqrt(det);
+        return -2. * c / (b - root);
     }
-
-    if (J < focusJ)
-    {
-        c = -J;
-    }
-    else
-    {
-        c = maxJ * M / slope_gain + J;
-    }
-
-    float root = sqrt(b * b - 4.0 * a * c);
-
-    if (J < focusJ)
-    {
-        intersectJ = 2.0 * c / (-b - root);
-    }
-    else
-    {
-        intersectJ = 2.0 * c / (-b + root);
-    }
-
-    return intersectJ;
 }
 
-float[3] findGamutBoundaryIntersection(float JMh_s[3],
-                                       float JM_cusp_in[2],
-                                       float J_focus,
-                                       float J_max,
-                                       float slope_gain,
-                                       float gamma_top,
-                                       float gamma_bottom)
+// Smooth minimum about the scaled reference, based upon a cubic polynomial
+float smin_scaled(float a,
+                  float b,
+                  float scale_reference)
 {
-    float slope = 0.0;
+    const float s_scaled = smooth_cusps * scale_reference;
+    const float h = max( s_scaled - fabs(a - b), 0.0) / s_scaled;
+    return min(a, b) - h * h * h * s_scaled * (1. / 6.);
+}
 
-    float s = max(0.000001, smoothCusps);
-    float JM_cusp[2] = JM_cusp_in;
-    JM_cusp[1] = JM_cusp_in[1] * (1.0 + smoothM * s); // M
+float estimate_line_and_boundary_intersection_M(float J_axis_intersect,
+                                                float slope,
+                                                float inv_gamma,
+                                                float J_max,
+                                                float M_max,
+                                                float J_intersection_reference)
+{
+    // Line defined by     J = slope * x + J_axis_intersect
+    // Boundary defined by J = J_max * (x / M_max) ^ (1/inv_gamma)
+    // Approximate as we do not want to iteratively solve intersection of a
+    // straight line and an exponential
 
-    float J_intersect_source = solve_J_intersect(JMh_s[0],
-                                                 JMh_s[1],
-                                                 J_focus,
-                                                 J_max,
-                                                 slope_gain);
-    float J_intersect_cusp = solve_J_intersect(JM_cusp[0],
-                                               JM_cusp[1],
-                                               J_focus,
-                                               J_max,
-                                               slope_gain);
+    // We calculate a shifted intersection from the original intersection using
+    // the inverse of the exponential and the provided reference
+    const float normalised_J = J_axis_intersect / J_intersection_reference;
+    const float shifted_intersection = J_intersection_reference * pow(normalised_J, inv_gamma);
 
-    if (J_intersect_source < J_focus)
-    {
-        slope = J_intersect_source * (J_intersect_source - J_focus) / (J_focus * slope_gain);
-    }
-    else
-    {
-        slope = (J_max - J_intersect_source) * (J_intersect_source - J_focus) / (J_focus * slope_gain);
-    }
+    // Now we find the M intersection of two lines
+    // line from origin to J,M Max       l1(x) = J/M * x
+    // line from J Intersect' with slope l2(x) = slope * x + Intersect'
 
-    float M_boundary_lower = J_intersect_cusp * pow(J_intersect_source / J_intersect_cusp, 1. / gamma_bottom) / (JM_cusp[0] / JM_cusp[1] - slope);
+    // return shifted_intersection / ((J_max / M_max) - slope);
+    return shifted_intersection * M_max / (J_max - slope * M_max);
+}
 
-    float M_boundary_upper = JM_cusp[1] * (J_max - J_intersect_cusp) * pow((J_max - J_intersect_source) / (J_max - J_intersect_cusp), 1. / gamma_top) / (slope * JM_cusp[1] + J_max - JM_cusp[0]);
+float find_gamut_boundary_intersection(float JM_cusp[2],
+                                       float J_max,
+                                       float gamma_top_inv,
+                                       float gamma_bottom_inv,
+                                       float J_intersect_source,
+                                       float slope,
+                                       float J_intersect_cusp)
+{
+    const float M_boundary_lower = estimate_line_and_boundary_intersection_M(J_intersect_source,
+                                                                             slope,
+                                                                             gamma_bottom_inv,
+                                                                             JM_cusp[0],
+                                                                             JM_cusp[1],
+                                                                             J_intersect_cusp);
 
-    float M_boundary = JM_cusp[1] * smin(M_boundary_lower / JM_cusp[1], M_boundary_upper / JM_cusp[1], s);
+    // The upper hull is flipped and thus 'zeroed' at J_max
+    // Also note we negate the slope
+    const float f_J_intersect_cusp = J_max - J_intersect_cusp;
+    const float f_J_intersect_source = J_max - J_intersect_source;
+    const float f_JM_cusp_J = J_max - JM_cusp[0];
+    const float M_boundary_upper = estimate_line_and_boundary_intersection_M(f_J_intersect_source,
+                                                                             -slope,
+                                                                             gamma_top_inv,
+                                                                             f_JM_cusp_J,
+                                                                             JM_cusp[1],
+                                                                             f_J_intersect_cusp);
 
-    float J_boundary = J_intersect_source + slope * M_boundary;
-
-    float return_JMh[3] = {J_boundary, M_boundary, J_intersect_source};
-
-    return return_JMh;
+    // Smooth minimum between the two calculated values for the M component
+    float M_boundary = smin_scaled(M_boundary_lower, M_boundary_upper, JM_cusp[1]);
+    return M_boundary;
 }
 
 float hueDependentUpperHullGamma(float h,
                                  float gamma_table[])
 {
-    const int i_lo = hue_position_in_uniform_table(h, gamutTableSize) + baseIndex;
+    const int i_lo = hue_position_in_uniform_table(h, tableSize) + baseIndex;
     const int i_hi = next_position_in_table(i_lo, gamma_table.size);
 
-    const float base_hue = base_hue_for_position(i_lo - baseIndex, gamutTableSize);
+    const float base_hue = base_hue_for_position(i_lo - baseIndex, tableSize);
 
     const float t = wrap_to_360(h) - base_hue;
 
     return lerp(gamma_table[i_lo], gamma_table[i_hi], t);
 }
 
-float getFocusGain(float J,
-                   float cuspJ,
-                   float limitJmax)
+float get_focus_gain(float J,
+                     float analytical_threshold,
+                     float limit_J_max,
+                     float focus_dist)
 {
-
-    float thr = lerp(cuspJ, limitJmax, focusGainBlend);
-    if (J > thr)
+    float gain = limit_J_max * focus_dist;
+    
+    if (J > analytical_threshold)
     {
-        // Approximate inverse required above threshold
-        float gain = (limitJmax - thr) / max(0.0001, limitJmax - J);
-        return pow(log10(gain), 1. / focusAdjustGain) + 1.;
+        // Approximate inverse required above threshold due to the introduction of J in the calculation
+        float gain_adjustment = log10( (limit_J_max - analytical_threshold) / max(0.0001, limit_J_max - J));
+        gain_adjustment = gain_adjustment * gain_adjustment + 1.;
+        gain = gain * gain_adjustment;
     }
-    else
-    {
-        // Analytic inverse possible below cusp
-        return 1.;
-    }
+    
+    return gain;
 }
 
-float[3] getReachBoundary(float J,
-                          float M,
-                          float h,
-                          ODTParams PARAMS,
-                          float JMcusp[2],
-                          float focusJ,
-                          float reachTable[])
+float remap_M(float M,
+              float gamut_boundary_M,
+              float reach_boundary_M,
+              bool invert = false)
 {
-    float limitJmax = PARAMS.limitJmax;
-    float midJ = PARAMS.midJ;
-    float model_gamma = PARAMS.model_gamma;
-    float focusDist = PARAMS.focusDist;
+    const float boundary_ratio = gamut_boundary_M / reach_boundary_M;
+    const float proportion = max(boundary_ratio, compression_threshold);
+    const float threshold = proportion * gamut_boundary_M;
 
-    const float reachMaxM = reachMFromTable(h, reachTable);
+    if (M <= threshold || proportion >= 1.)
+        return M;
 
-    float slope_gain = limitJmax * focusDist * getFocusGain(J, JMcusp[0], limitJmax);
+    // Translate to place threshold at zero
+    const float m_offset = M - threshold;
+    const float gamut_offset = gamut_boundary_M - threshold;
+    const float reach_offset = reach_boundary_M - threshold;
 
-    float intersectJ = solve_J_intersect(J, M, focusJ, limitJmax, slope_gain);
-    float slope;
-    if (intersectJ < focusJ)
+    const float scale = reach_offset / ((reach_offset / gamut_offset) - 1.);
+    const float nd = m_offset / scale;
+
+    // Shift result back to absolute
+    return threshold + reinhard_remap(scale, nd, invert);
+}
+
+float[3] compress_gamut(float JMh[3],
+                        float Jx,
+                        ODTParams p,
+                        HueDependentGamutParams hdp,
+                        bool invert = false)
+{
+    const float J = JMh[0];
+    const float M = JMh[1];
+    const float h = JMh[2];
+
+    const float slope_gain = get_focus_gain(Jx, hdp.analytical_threshold, p.limit_J_max, p.focus_dist);
+    const float J_intersect_source = solve_J_intersect(J, M, hdp.focus_J, p.limit_J_max, slope_gain);
+    const float gamut_slope = compute_compression_vector_slope(J_intersect_source, hdp.focus_J, p.limit_J_max, slope_gain);
+
+    const float J_intersect_cusp = solve_J_intersect(hdp.JMcusp[0], hdp.JMcusp[1], hdp.focus_J, p.limit_J_max, slope_gain);
+
+    const float gamut_boundary_M = find_gamut_boundary_intersection(hdp.JMcusp,
+                                                                    p.limit_J_max,
+                                                                    hdp.gamma_top_inv,
+                                                                    hdp.gamma_bottom_inv,
+                                                                    J_intersect_source,
+                                                                    gamut_slope,
+                                                                    J_intersect_cusp);
+
+    // print("slope_gain:\t",slope_gain,"\n");
+    // print("J_int_src:\t",J_intersect_source,"\n");
+    // print("gamut_slope:\t",gamut_slope,"\n");
+    // print("J_int_csp:\t",J_intersect_cusp,"\n");
+    // print("gamut_boundary_M:\t",gamut_boundary_M,"\n");
+                                                                
+    if (gamut_boundary_M <= 0.)
     {
-        slope = intersectJ * (intersectJ - focusJ) / (focusJ * slope_gain);
+        float returnJMh[3] = {J, 0., h};
+        return returnJMh;
     }
-    else
+
+    float reach_max_M = reach_M_from_table( h, p.TABLE_reach_M);
+    // print("reach_max_M:\t",reach_max_M,"\n");
+
+    const float reach_boundary_M = estimate_line_and_boundary_intersection_M(J_intersect_source,
+                                                                             gamut_slope,
+                                                                             p.model_gamma_inv,
+                                                                             p.limit_J_max,
+                                                                             reach_max_M,
+                                                                             p.limit_J_max);
+
+    // print("reach_boundary_M:\t",reach_boundary_M,"\n");
+
+    const float remapped_M = remap_M(M, gamut_boundary_M, reach_boundary_M, invert);
+
+    // print("remapped_M:\t",remapped_M,"\n");
+
+    float JMhcompressed[3] = {J_intersect_source + remapped_M * gamut_slope,
+                              remapped_M,
+                              h};
+
+    return JMhcompressed;
+}
+
 float[2] cusp_from_table(float h,
                          float table[][3])
 {
@@ -782,36 +811,20 @@ float[2] cusp_from_table(float h,
     return cusp_JM;
 }
 
-float[3] compressGamut(float JMh[3],
-                       ODTParams PARAMS,
-                       float Jx,
-                       float gamutCuspTable[][3],
-                       float gamutTopGamma[],
-                       float reachTable[],
-                       bool invert = false)
 int lookup_hue_interval(float h, 
                         float hue_table[totalTableSize], 
                         int hue_linearity_search_range[2])
 {
-    float limitJmax = PARAMS.limitJmax;
-    float midJ = PARAMS.midJ;
-    float focusDist = PARAMS.focusDist;
-    float model_gamma = PARAMS.model_gamma;
     // Search the given table for the interval containing the desired hue
     // Returns the upper index of the interval
 
-    float project_from[2] = {JMh[0], JMh[1]};
-    float JMcusp[2] = cuspFromTable(JMh[2], gamutCuspTable);
     // We can narrow the search range based on the hues being almost uniform
     unsigned int i = baseIndex + hue_position_in_uniform_table(h, totalTableSize);  // TODO or just tableSize?
     unsigned int i_lo = max(baseIndex, i + hue_linearity_search_range[0]);
     unsigned int i_hi = min(baseIndex + tableSize, i + hue_linearity_search_range[1]);
 
-    if (JMh[1] < 0.0001 || JMh[0] > limitJmax)
     while (i_lo + 1 < i_hi)
     {
-        float JMh_return[3] = {JMh[0], 0.0, JMh[2]};
-        return JMh_return;
         if (h > hue_table[i])
         {
             i_lo = i;
@@ -823,135 +836,92 @@ int lookup_hue_interval(float h,
         i = midpoint(i_lo, i_hi);
     }
 
-    // Calculate where the out of gamut color is projected to
-    float focusJ = lerp(JMcusp[0], midJ, min(1., cuspMidBlend - (JMcusp[0] / limitJmax)));
+    i_hi = max( 1, i_hi);
 
-    float slope_gain = limitJmax * focusDist * getFocusGain(Jx, JMcusp[0], limitJmax);
-
-    // Find gamut intersection
-    float gamma_top = hueDependentUpperHullGamma(JMh[2], gamutTopGamma);
-    float gamma_bottom = PARAMS.lowerHullGamma;
-
-    float boundaryReturn[3] = findGamutBoundaryIntersection(JMh,
-                                                            JMcusp,
-                                                            focusJ,
-                                                            limitJmax,
-                                                            slope_gain,
-                                                            gamma_top,
-                                                            gamma_bottom);
-
-    float JMboundary[2] = {boundaryReturn[0], boundaryReturn[1]};
-    float project_to[2] = {boundaryReturn[2], 0.0};
-    float projectJ = boundaryReturn[2];
-
-    // Calculate AP1 reach boundary
-    float reachBoundary[3] = getReachBoundary(JMboundary[0],
-                                              JMboundary[1],
-                                              JMh[2],
-                                              PARAMS,
-                                              JMcusp,
-                                              focusJ,
-                                              reachTable);
-
-    float difference = max(1.0001, reachBoundary[1] / JMboundary[1]);
-    float threshold = max(compressionThreshold, 1. / difference);
-
-    // Compress the out of gamut color along the projection line
-    float v = project_from[1] / JMboundary[1];
-
-    v = compressionFunction(v,
-                            threshold,
-                            difference,
-                            invert);
-
-    float JMcompressed[2];
-    JMcompressed[0] = project_to[0] + v * (JMboundary[0] - project_to[0]);
-    JMcompressed[1] = project_to[1] + v * (JMboundary[1] - project_to[1]);
-
-    float return_JMh[3] = {JMcompressed[0], JMcompressed[1], JMh[2]};
-
-    return return_JMh;
+    return i_hi;
 }
 
-float[3] gamutMap_fwd(float JMh[3],
-                      ODTParams PARAMS,
-                      float gamutCuspTable[][3],
-                      float gamutTopGamma[],
-                      float reachTable[])
+float interpolation_weight( float h, float h_lo, float h_hi)
 {
-    return compressGamut(JMh,
-                         PARAMS,
-                         JMh[0],
-                         gamutCuspTable,
-                         gamutTopGamma,
-                         reachTable,
-                         false);
+    return (h - h_lo);
 }
 
-float[3] gamutMap_inv(float JMh[3],
-                      ODTParams PARAMS,
-                      float gamutCuspTable[][3],
-                      float gamutTopGamma[],
-                      float reachTable[])
+float compute_focus_J( float cusp_J, float mid_J, float limit_J_max)
 {
-    float JMcusp[2] = cuspFromTable(JMh[2], gamutCuspTable);
-    float Jx = JMh[0];
-
-    // Analytic inverse below threshold
-    if (Jx <= lerp(JMcusp[0], PARAMS.limitJmax, focusGainBlend))
-        return compressGamut(JMh,
-                             PARAMS,
-                             Jx,
-                             gamutCuspTable,
-                             gamutTopGamma,
-                             reachTable,
-                             true);
-
-    // Approximation above threshold
-    Jx = compressGamut(JMh,
-                       PARAMS,
-                       Jx,
-                       gamutCuspTable,
-                       gamutTopGamma,
-                       reachTable,
-                       true)[0];
-    return compressGamut(JMh,
-                         PARAMS,
-                         Jx,
-                         gamutCuspTable,
-                         gamutTopGamma,
-                         reachTable,
-                         true);
+    return lerp( cusp_J, mid_J, min(1, cusp_mid_blend - (cusp_J / limit_J_max)));
 }
 
-float[3] RGB_to_JMh(float RGB[3],
-                    float RGB_TO_XYZ_M[3][3],
-                    float peakLuminance)
+HueDependentGamutParams init_HueDependentGamutParams(float hue, ODTParams p)
 {
-    float luminanceRGB[3] = mult_f_f3(peakLuminance, RGB); // Scale factor is technically equal to [(peakLuminance / referenceLuminance) * referenceLuminance] but referenceLuminance cancels out, so just multiply by peakLuminance
-    float XYZ[3] = mult_f3_f33(luminanceRGB, RGB_TO_XYZ_M);
+    HueDependentGamutParams hdp;
+    hdp.gamma_bottom_inv = p.lower_hull_gamma_inv;
 
-    float RGB_w[3] = {referenceLuminance, referenceLuminance, referenceLuminance};
-    float XYZ_w[3] = mult_f3_f33(RGB_w, RGB_TO_XYZ_M);
+    const int i_hi = lookup_hue_interval(hue, p.TABLE_hues, p.hue_linearity_search_range);
+    const float t = interpolation_weight(hue, p.TABLE_hues[i_hi - 1], p.TABLE_hues[i_hi]);
 
-    float JMh[3] = XYZ_to_Hellwig2022_JMh(XYZ, XYZ_w);
+    hdp.JMcusp = cusp_from_table(hue, p.TABLE_gamut_cusps);
+    hdp.gamma_top_inv = lerp(p.TABLE_upper_hull_gamma[i_hi - 1], p.TABLE_upper_hull_gamma[i_hi], t);
+    hdp.focus_J = compute_focus_J(hdp.JMcusp[0], p.mid_J, p.limit_J_max);
+    hdp.analytical_threshold = lerp(hdp.JMcusp[0], p.limit_J_max, focus_gain_blend);
 
-    return JMh;
+    return hdp;
 }
 
-float[3] JMh_to_RGB(float JMh[3],
-                    float XYZ_TO_RGB_M[3][3],
-                    float peakLuminance)
+float[3] gamut_compress_fwd(float JMh[3],
+                            ODTParams p)
 {
-    float RGB_w[3] = {referenceLuminance, referenceLuminance, referenceLuminance};
-    float XYZ_w[3] = mult_f3_f33(RGB_w, invert_f33(XYZ_TO_RGB_M));
+    const float J = JMh[0];
+    const float M = JMh[1];
+    const float h = JMh[2];
 
-    float luminanceXYZ[3] = Hellwig2022_JMh_to_XYZ(JMh, XYZ_w);
+    if (J <= 0.0) {
+        float JMh[3] = {0., 0., h};
+        return JMh;
+    }
 
-    float luminanceRGB[3] = mult_f3_f33(luminanceXYZ, XYZ_TO_RGB_M);
-    float RGB[3] = mult_f_f3(1. / peakLuminance, luminanceRGB); // Scale factor is technically equal to [1. / (peakLuminance/referenceLuminance) / referenceLuminance] and referenceLuminance cancels out, so just divide by peakLuminance
+    if (M < 0. || J > p.limit_J_max) {
+        float JMh[3] = {J, 0., h};
+        return JMh;
+    }
 
-    return RGB;
+    HueDependentGamutParams hdp = init_HueDependentGamutParams( h, p);
+
+    // print("reachMaxM:\n\t", reach_M_from_table(h, p.TABLE_reach_M), "\n");
+
+    // print("HDP:\n");
+    // print("\tHDP.JMcusp = { ", hdp.JMcusp[0], hdp.JMcusp[1], " }\n");
+    // print("\tHDP.gamma_top_inv = ", hdp.gamma_top_inv, "\n");
+    // print("\tHDP.focus_J = ", hdp.focus_J, "\n");
+    // print("\tHDP.analy_thres = ", hdp.analytical_threshold, "\n");
+
+    return compress_gamut(JMh, J, p, hdp, false);
+}
+
+float[3] gamut_compress_inv(float JMh[3],
+                            ODTParams p)
+{
+    const float J = JMh[0];
+    const float M = JMh[1];
+    const float h = JMh[2];
+
+    if (J <= 0.0) {
+        float JMh[3] = {0., 0., h};
+        return JMh;
+    }
+    if (M < 0. || J > p.limit_J_max) {
+        float JMh[3] = {J, 0., h};
+        return JMh;
+    }
+
+    HueDependentGamutParams hdp = init_HueDependentGamutParams( h, p);
+
+    float Jx = J;
+
+    if (Jx > hdp.analytical_threshold) {
+        Jx = compress_gamut(JMh, Jx, p, hdp, true)[0];
+    }
+
+    return compress_gamut(JMh, Jx, p, hdp, true);
 }
 
 // Table building functions
@@ -962,14 +932,21 @@ bool any_below_zero(float newLimitRGB[3])
 
 JMhParams init_JMhParams(Chromaticities prims)
 {
+    const Chromaticities CAM16_PRI = {
+        {0.8336, 0.1735},
+        {2.3854, -1.4659},
+        {0.087, -0.125},
+        {0.333, 0.333}};
+
+    const float MATRIX_16[3][3] = XYZtoRGB_f33(CAM16_PRI, 1.0);
+
     const float base_cone_response_to_Aab[3][3] = {
         {2., 1., 1. / 9.},
         {1., -12. / 11., 1. / 9.},
-        {1. / 20., 1. / 11., -2. / 9.}
-    };
+        {1. / 20., 1. / 11., -2. / 9.}};
 
     const float RGB_TO_XYZ[3][3] = RGBtoXYZ_f33(prims, 1.0);
-    const float XYZ_w[3] = mult_f3_f33( f3_from_f(referenceLuminance), RGB_TO_XYZ);
+    const float XYZ_w[3] = mult_f3_f33(f3_from_f(ref_luminance), RGB_TO_XYZ);
 
     float Y_w = XYZ_w[1];
 
@@ -981,48 +958,44 @@ JMhParams init_JMhParams(Chromaticities prims)
     const float k4 = k * k * k * k;
     const float F_L = 0.2 * k4 * (5. * L_A) + 0.1 * pow((1. - k4), 2.) * pow(5. * L_A, 1. / 3.);
 
-    const float F_L_n = F_L / referenceLuminance;
-    const float cz = model_gamma();
+    const float F_L_n = F_L / ref_luminance;
+    const float cz = model_gamma;
 
     const float D_RGB[3] = {
         F_L_n * Y_w / RGB_w[0],
         F_L_n * Y_w / RGB_w[1],
-        F_L_n * Y_w / RGB_w[2]
-    };
+        F_L_n * Y_w / RGB_w[2]};
 
     const float RGB_wc[3] = {
         D_RGB[0] * RGB_w[0],
         D_RGB[1] * RGB_w[1],
-        D_RGB[2] * RGB_w[2]
-    };
+        D_RGB[2] * RGB_w[2]};
 
-    const float RGB_Aw[3] = { 
-        post_adaptation_cone_response_compression_fwd( RGB_wc[0]), 
-        post_adaptation_cone_response_compression_fwd( RGB_wc[1]),
-        post_adaptation_cone_response_compression_fwd( RGB_wc[2])
-    };        
+    const float RGB_Aw[3] = {
+        post_adaptation_cone_response_compression_fwd(RGB_wc[0]),
+        post_adaptation_cone_response_compression_fwd(RGB_wc[1]),
+        post_adaptation_cone_response_compression_fwd(RGB_wc[2])};
 
-    float cone_response_to_Aab[3][3] = mult_f33_f33( mult_f_f33(cam_nl_scale, MATRIX_IDENTITY), base_cone_response_to_Aab);
+    float cone_response_to_Aab[3][3] = mult_f33_f33(mult_f_f33(cam_nl_scale, MATRIX_IDENTITY), base_cone_response_to_Aab);
     float A_w = cone_response_to_Aab[0][0] * RGB_Aw[0] + cone_response_to_Aab[1][0] * RGB_Aw[1] + cone_response_to_Aab[2][0] * RGB_Aw[2];
     float A_w_J = _post_adaptation_cone_response_compression_fwd(F_L);
 
     // Prescale the CAM16 LMS responses to directly provide for chromatic adaptation
-    float M1[3][3] = mult_f33_f33( RGBtoXYZ_f33(prims, 1.0), XYZtoRGB_f33(CAM16_PRI, 1.0) );
-    float M2[3][3] = mult_f_f33( referenceLuminance, MATRIX_IDENTITY);
-    float MATRIX_RGB_to_CAM16[3][3] = mult_f33_f33( M1, M2);
-    float MATRIX_RGB_to_CAM16_c[3][3] = mult_f33_f33( MATRIX_RGB_to_CAM16, scale_matrix_diagonal_f33_f3(MATRIX_IDENTITY, D_RGB));
-    
+    float M1[3][3] = mult_f33_f33(RGB_TO_XYZ, MATRIX_16);
+    float M2[3][3] = mult_f_f33(ref_luminance, MATRIX_IDENTITY);
+    float MATRIX_RGB_to_CAM16[3][3] = mult_f33_f33(M1, M2);
+    float MATRIX_RGB_to_CAM16_c[3][3] = mult_f33_f33(MATRIX_RGB_to_CAM16, scale_matrix_diagonal_f33_f3(MATRIX_IDENTITY, D_RGB));
+
     float MATRIX_cone_response_to_Aab[3][3] = {
         {cone_response_to_Aab[0][0] / A_w, cone_response_to_Aab[0][1] * 43. * surround[2], cone_response_to_Aab[0][2] * 43. * surround[2]},
         {cone_response_to_Aab[1][0] / A_w, cone_response_to_Aab[1][1] * 43. * surround[2], cone_response_to_Aab[1][2] * 43. * surround[2]},
-        {cone_response_to_Aab[2][0] / A_w, cone_response_to_Aab[2][1] * 43. * surround[2], cone_response_to_Aab[2][2] * 43. * surround[2]}
-    };
+        {cone_response_to_Aab[2][0] / A_w, cone_response_to_Aab[2][1] * 43. * surround[2], cone_response_to_Aab[2][2] * 43. * surround[2]}};
 
     JMhParams p;
     p.MATRIX_RGB_to_CAM16_c = MATRIX_RGB_to_CAM16_c;
-    p.MATRIX_CAM16_c_to_RGB = invert_f33( MATRIX_RGB_to_CAM16_c);
+    p.MATRIX_CAM16_c_to_RGB = invert_f33(MATRIX_RGB_to_CAM16_c);
     p.MATRIX_cone_response_to_Aab = MATRIX_cone_response_to_Aab;
-    p.MATRIX_Aab_to_cone_response = invert_f33( MATRIX_cone_response_to_Aab);
+    p.MATRIX_Aab_to_cone_response = invert_f33(MATRIX_cone_response_to_Aab);
     p.F_L_n = F_L_n;
     p.cz = cz;
     p.inv_cz = 1. / cz;
@@ -1058,7 +1031,7 @@ void build_limiting_cusp_corners_tables(output float RGB_corners[totalCornerCoun
     int min_index = 0;
     for (int i = 0; i != cuspCornerCount; i = i + 1)
     {
-        temp_RGB_corners[i] = mult_f_f3( peakLuminance / referenceLuminance, generate_unit_cube_cusp_corners(i));
+        temp_RGB_corners[i] = mult_f_f3( peakLuminance / ref_luminance, generate_unit_cube_cusp_corners(i));
         temp_JMh_corners[i] = RGB_to_JMh( temp_RGB_corners[i], params);
         if (temp_JMh_corners[i][2] < temp_JMh_corners[min_index][2]) min_index = 1;
     }
@@ -1526,7 +1499,7 @@ bool evaluate_gamma_fit(float JMcusp[2],
                         float lower_hull_gamma_inv,
                         JMhParams limit_params)
 {
-    float luminance_limit = peakLuminance / referenceLuminance;
+    float luminance_limit = peakLuminance / ref_luminance;
 
     for (int testIndex = 0; testIndex < test_count; testIndex = testIndex + 1)
     {
@@ -1625,35 +1598,38 @@ float[totalTableSize] make_upper_hull_gamma_table(float gamutCuspTable[totalTabl
             }
         }
 
-        if (gammaTable[i] < 0.)
-        {
-            print("Did not find top gamma for hue: ", hue, "\n");
-        }
-
-        // Duplicate gamma value to array, leaving empty entries at first and last position
-        gamutTopGamma[i + baseIndex] = gammaTable[i];
+        upper_hull_gamma[i] = 1./high;
     }
 
     // Copy last populated entry to first empty spot
-    gamutTopGamma[0] = gammaTable[gamutTableSize - 1];
+    upper_hull_gamma[0] = upper_hull_gamma[tableSize];
 
     // Copy first populated entry to last empty spot
-    gamutTopGamma[totalTableSize - 1] = gammaTable[0];
+    upper_hull_gamma[tableSize + baseIndex] = upper_hull_gamma[baseIndex];
 
-    return gamutTopGamma;
+    return upper_hull_gamma;
 }
 
-ODTParams init_ODTParams(
-    float peakLuminance,
-    Chromaticities limitingPrimaries,
-    Chromaticities encodingPrimaries,
-    float viewingConditions = 1 // 0 = "dark"; 1 = "dim"; 2 = "average"
-)
+int[2] determine_hue_linearity_search_range(float hue_table[])
 {
-    TSParams TSPARAMS = init_TSParams(peakLuminance);
+    // This function searches through the hues looking for the largest
+    // deviations from a linear distribution. We can then use this to initialise
+    // the binary search range to something smaller than the full one to reduce
+    // the number of lookups per hue lookup from ~ceil(log2(table size)) to
+    // ~ceil(log2(range)) during image rendering.
 
-    float limitJmax = Y_to_Hellwig_J(peakLuminance);
-    float midJ = Y_to_Hellwig_J(TSPARAMS.c_t * 100.);
+    const int lower_padding = 0;
+    const int upper_padding = 1;
+    
+    int hue_linearity_search_range[2] = {lower_padding, upper_padding};
+
+    for (int i = baseIndex; i != baseIndex + tableSize; i = i + 1)
+    {
+        const int pos = hue_position_in_uniform_table(hue_table[i],totalTableSize);
+        const int delta = i - pos;
+        hue_linearity_search_range[0] = min(hue_linearity_search_range[0], delta + lower_padding);
+        hue_linearity_search_range[1] = max(hue_linearity_search_range[1], delta + upper_padding);
+    }
 
     return hue_linearity_search_range;
 }
@@ -1693,7 +1669,7 @@ ODTParams init_ODTParams(float peakLuminance,
     p.chroma_compress_scale = pow(0.03379 * peakLuminance, 0.30596) - 0.45135;
 
     // Gamut compression parameters
-    p.mid_J = Y_to_J(p.ts.c_t * referenceLuminance, p.input_params);
+    p.mid_J = Y_to_J(p.ts.c_t * ref_luminance, p.input_params);
     p.focus_dist = focus_distance + focus_distance * focus_distance_scaling * p.ts.log_peak;
     const float lower_hull_gamma = 1.14 + 0.07 * p.ts.log_peak;
     p.lower_hull_gamma_inv = 1. / lower_hull_gamma;
