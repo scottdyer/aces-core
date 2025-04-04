@@ -6,20 +6,30 @@
 // Library File with functions used for the display encoding/decoding steps
 //
 
-
-float[3] apply_white_scale( float XYZluminance[3], 
-                            ODTParams PARAMS, 
-                            bool invert )
+// White point scaling
+//     If the creative white differs from the calibration white of the display,
+//     unequal display code values will be required to produce the neutral of
+//     the creative white. Without scaling, one channel would hit the max value
+//     first while the other channels continue to increase, resulting in a hue
+//     shift. To avoid this, the white scaling finds the largest channel and
+//     applies a scale factor to force the point where this channel hits max to
+//     1.0, assuring that all three channels "fit" within the peak value. In the
+//     inverse direction, the white scaling is removed.
+float[3] apply_white_scale(float rgb[3],
+                           float MAT_limit_to_display[3][3],
+                           bool invert)
 {
-    float RGB_w[3] = mult_f3_f33( PARAMS.XYZ_w_limit, PARAMS.OUTPUT_XYZ_TO_RGB);
-    float RGB_w_f[3] = mult_f_f3( 1./referenceLuminance, RGB_w);
-    float scale = 1. / max( max(RGB_w_f[0], RGB_w_f[1]), RGB_w_f[2]); 
+    float RGB_w_f[3] = mult_f3_f33(f3_from_f(1.), MAT_limit_to_display);
+    float scale = 1. / max(max(RGB_w_f[0], RGB_w_f[1]), RGB_w_f[2]);
     // scale factor is equal to 1/largestChannel
-            
-    if (invert) {
-        return mult_f_f3( 1./scale, XYZluminance);
-    } else {
-        return mult_f_f3( scale, XYZluminance);
+
+    if (invert)
+    {
+        return clamp_f3(mult_f_f3(1. / scale, rgb), 0, 1);
+    }
+    else
+    {
+        return mult_f_f3(scale, rgb);
     }
 }
 
@@ -412,86 +422,36 @@ float[3] eotf( float rgb_cv[3],
     }
 }
 
-float[3] clamp_zero_to_peakLuminance(float XYZ_in[3],
-                                     ODTParams PARAMS)
-{
-    float rgb[3] = mult_f3_f33(XYZ_in, PARAMS.LIMIT_XYZ_TO_RGB);
-
-    // Clamp to relative peakLuminance in RGB space prior to white scaling
-    rgb = clamp_f3(rgb, 0.0, PARAMS.peakLuminance / referenceLuminance);
-
-    float XYZ[3] = mult_f3_f33(rgb, PARAMS.LIMIT_RGB_TO_XYZ);
-
-    return XYZ;
-}
-
-float[3] white_limiting(float XYZ_in[3],
-                        ODTParams PARAMS,
-                        bool scale_white,
-                        bool invert = false)
-{
-    // The white limiting step clamps the output to between zero and the peak
-    // luminance value so that values do not exceed the maximum value of the
-    // tonescale. 
-    // If the creative white differs from the calibration white of the display,
-    // unequal display code values will be required to produce the neutral of
-    // the creative white. Without scaling, one channel would hit the max value
-    // first while the other channels continue to increase, resulting in a hue
-    // shift. To avoid this, the white scaling finds the largest channel and
-    // applies a scale factor to force the point where this channel hits max to
-    // 1.0, assuring that all three channels "fit" within the peak value. In the
-    // inverse direction, the white scaling is removed.
-
-    float XYZ[3] = XYZ_in;
-
-    // Clamp to peak luminance
-    XYZ = clamp_zero_to_peakLuminance(XYZ, PARAMS);
-
-    // White point scaling
-    if (scale_white)
-    {
-        if (invert)
-        { // Remove white scaling
-            XYZ = apply_white_scale(XYZ, PARAMS, true);
-        }
-        else
-        { // Apply white scaling
-            XYZ = apply_white_scale(XYZ, PARAMS, false);
-        }
-    }
-    return XYZ;
-}
-
-float[3] display_encoding(float XYZ[3],
-                          ODTParams PARAMS,
+float[3] display_encoding(float rgb[3],
+                          float MAT_limit_to_display[3][3],
                           int eotf_enum,
                           float linear_scale = 1.0)
 {
-    // XYZ to display RGB
-    float RGB_display_linear[3] = mult_f3_f33(XYZ, PARAMS.OUTPUT_XYZ_TO_RGB);
+    // Limiting to display primary encoding
+    float rgb_display_linear[3] = mult_f3_f33(rgb, MAT_limit_to_display);
 
     // Linear scale factor
-    RGB_display_linear = mult_f_f3(linear_scale, RGB_display_linear);
+    float rgb_display_scaled[3] = mult_f_f3(linear_scale, rgb_display_linear);
 
     // Apply inverse EOTF
-    float out[3] = eotf_inv(RGB_display_linear, eotf_enum);
+    float cv[3] = eotf_inv(rgb_display_scaled, eotf_enum);
 
-    return out;
+    return cv;
 }
 
 float[3] display_decoding(float cv[3],
-                          ODTParams PARAMS,
+                          float MAT_display_to_limit[3][3],
                           int eotf_enum,
                           float linear_scale = 1.0)
 {
     // Apply EOTF
-    float RGB_display_linear[3] = eotf(cv, eotf_enum);
+    float rgb_display_scaled[3] = eotf(cv, eotf_enum);
 
     // Linear scale factor
-    RGB_display_linear = mult_f_f3(1. / linear_scale, RGB_display_linear);
+    float rgb_display_linear[3] = mult_f_f3(1. / linear_scale, rgb_display_scaled);
 
-    // Display RGB to XYZ
-    float XYZ[3] = mult_f3_f33(RGB_display_linear, PARAMS.OUTPUT_RGB_TO_XYZ);
+    // Display to limiting primary encoding
+    float rgb_limit[3] = mult_f3_f33(rgb_display_linear, MAT_display_to_limit);
 
-    return XYZ;
+    return rgb_limit;
 }
