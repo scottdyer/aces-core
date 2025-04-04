@@ -1,3 +1,20 @@
+**Version 2.0 (April 4, 2025)**
+* `aces-core`
+  * Refactor to parallel the optimizations made by OCIO (included in their 2.4.2 release)
+  * Update table building functions to distribute hue sampling. Changes pixel output slightly.
+  * Simplify JMh<->RGB conversion functions.
+  * Clean up the structure and readability of the gamut compress functions, removing redundant or unused calculations.
+  * Include table building functions in initialization of ODTParams structure that allows passing of values that only need to be pre-computed once. This simplifies the top level access at 'aces-output'.
+* `aces-output`
+  * Add SDR (100 nit limited) views for other HDR display outputs
+  * Simply ODTParam generation and calls to modules defined in `aces-core`
+  * Fix typos in usernames for Rec709 D65
+* `aces-amf`
+  * add pattern restrictions for 2.0 Transform IDs in each affected transformType - OutputTransform, InverseOutputTransform, InputTransform, LookTransform, ColorSpaceTransform
+* `aces-input-and-colorspaces`
+  * Fixed matrix in LogC4 transforms
+
+
 **Version 2.0 Developer Release 3 (Sept 2, 2024):**
 * Bugs
   * Change lower hull gamma approximation from a constant value to a value determined using the log of the peak luminance. For SDR outputs, the value reduces to the former value but this change minimimizes some clipping artifacts that could occur at edge values at higher luminance outputs.s
