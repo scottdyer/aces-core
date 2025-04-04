@@ -336,26 +336,15 @@ float[3] clamp_AP0_to_AP1(float aces[3],
     return AP0_clamped;
 }
 
-float[3] JMh_to_output_XYZ(float JMh[3],
-                           ODTParams PARAMS)
+float reach_M_from_table(float h,
+                         float table[])
 {
-    float XYZluminance[3] = Hellwig2022_JMh_to_XYZ(JMh,
-                                                   PARAMS.XYZ_w_limit);
+    int base = hue_position_in_uniform_table(h, tableSize);
+    float t = h - base;
+    int i_lo = base + baseIndex;
+    int i_hi = i_lo + 1;
 
-    float XYZ[3] = mult_f_f3(1. / referenceLuminance, XYZluminance);
-
-    return XYZ;
-}
-
-float[3] XYZ_output_to_JMh(float XYZ[3],
-                           ODTParams PARAMS)
-{
-    float XYZluminance[3] = mult_f_f3(referenceLuminance, XYZ);
-
-    float JMh[3] = XYZ_to_Hellwig2022_JMh(XYZluminance,
-                                          PARAMS.XYZ_w_limit);
-
-    return JMh;
+    return lerp(table[i_lo], table[i_hi], t);
 }
 
 float reinhard_remap(float scale,
