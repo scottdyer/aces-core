@@ -14,8 +14,7 @@ const Chromaticities AP0 =
         {0.73470, 0.26530},
         {0.00000, 1.00000},
         {0.00010, -0.07700},
-        {0.32168, 0.33767}
-    };
+        {0.32168, 0.33767}};
 
 const float AP0_XYZ_TO_RGB[3][3] = XYZtoRGB_f33(AP0, 1.0);
 const float AP0_RGB_TO_XYZ[3][3] = RGBtoXYZ_f33(AP0, 1.0);
@@ -26,18 +25,16 @@ const Chromaticities AP1 =
         {0.713, 0.293},
         {0.165, 0.830},
         {0.128, 0.044},
-        {0.32168, 0.33767}
-    };
+        {0.32168, 0.33767}};
 
 const float AP1_XYZ_TO_RGB[3][3] = XYZtoRGB_f33(AP1, 1.0);
 const float AP1_RGB_TO_XYZ[3][3] = RGBtoXYZ_f33(AP1, 1.0);
 
-const float AP0_TO_AP1[3][3] = mult_f33_f33( AP0_RGB_TO_XYZ, AP1_XYZ_TO_RGB);
-const float AP1_TO_AP0[3][3] = mult_f33_f33( AP1_RGB_TO_XYZ, AP0_XYZ_TO_RGB);
+const float AP0_TO_AP1[3][3] = mult_f33_f33(AP0_RGB_TO_XYZ, AP1_XYZ_TO_RGB);
+const float AP1_TO_AP0[3][3] = mult_f33_f33(AP1_RGB_TO_XYZ, AP0_XYZ_TO_RGB);
 
 // "Reach" Primaries - equal to ACES "AP1" primaries
 const Chromaticities REACH_PRI = AP1;
-
 
 // Table generation
 const int tableSize = 360;
@@ -93,8 +90,7 @@ const float compression_threshold = 0.75;
 const float MATRIX_IDENTITY[3][3] = {
     {1., 0, 0},
     {0, 1., 0},
-    {0, 0, 1.}
-};
+    {0, 0, 1.}};
 
 struct JMhParams
 {
@@ -103,9 +99,9 @@ struct JMhParams
     float MATRIX_CAM16_c_to_RGB[3][3];
     float MATRIX_cone_response_to_Aab[3][3];
     float MATRIX_Aab_to_cone_response[3][3];
-    float F_L_n;     // F_L normalised
+    float F_L_n; // F_L normalised
     float cz;
-    float inv_cz;    // 1/cz
+    float inv_cz; // 1/cz
     float A_w_J;
     float inv_A_w_J; // 1/A_w_J
 };
@@ -152,8 +148,6 @@ struct ODTParams
     float TABLE_upper_hull_gamma[totalTableSize];
     int hue_linearity_search_range[2];
 
-    // Parameters passed to display encoding
-    float XYZ_w_limit[3];
 };
 
 float wrap_to_360(float hue)
@@ -184,7 +178,6 @@ float base_hue_for_position(int i_lo, int table_size)
     float result = i_lo * hue_limit / table_size;
     return result;
 }
-
 
 // CAM Functions
 float _post_adaptation_cone_response_compression_fwd(float Rc)
@@ -277,11 +270,11 @@ float[3] Aab_to_JMh(float Aab[3],
     if (Aab[0] <= 0.)
     {
         return JMh;
-    } 
+    }
     float J = Achromatic_n_to_J(Aab[0], p.cz);
     float M = sqrt(Aab[1] * Aab[1] + Aab[2] * Aab[2]);
     float h_rad = atan2(Aab[2], Aab[1]);
-    float h = wrap_to_360(radians_to_degrees(h_rad)); 
+    float h = wrap_to_360(radians_to_degrees(h_rad));
 
     JMh[0] = J;
     JMh[1] = M;
@@ -366,10 +359,14 @@ float reinhard_remap(float scale,
                      float nd,
                      bool invert = false)
 {
-    if (invert) {
-        if (nd >= 1.0) {
+    if (invert)
+    {
+        if (nd >= 1.0)
+        {
             return scale;
-        } else {
+        }
+        else
+        {
             return scale * -(nd / (nd - 1.));
         }
     }
@@ -448,17 +445,18 @@ float[3] chroma_compress_fwd(float JMh[3],
 
     float M_compr = M;
 
-    if (M != 0.0) {
+    if (M != 0.0)
+    {
         const float nJ = tonemapped_J / p.limit_J_max;
         const float snJ = max(0., 1. - nJ);
         float Mnorm = chroma_compress_norm(h, p.chroma_compress_scale);
         float limit = pow(nJ, p.model_gamma_inv) * reach_M_from_table(h, p.TABLE_reach_M) / Mnorm;
-    
+
         float toe_limit = limit - 0.001;
         float toe_snJ_sat = snJ * p.sat;
         float toe_sqrt_nJ_sat_thr = sqrt(nJ * nJ + p.sat_thr);
         float toe_nJ_compr = nJ * p.compr;
-     
+
         // Rescaling of M with the tonescaled J to get the M to the same range as
         // J after the tonescale.  The rescaling uses the Hellwig2022 model gamma to
         // keep the M/J ratio correct (keeping the chromaticities constant).
@@ -505,7 +503,7 @@ float[3] chroma_compress_inv(float JMh[3],
         const float snJ = max(0., 1. - nJ);
         float Mnorm = chroma_compress_norm(h, p.chroma_compress_scale);
         float limit = pow(nJ, p.model_gamma_inv) * reach_M_from_table(h, p.TABLE_reach_M) / Mnorm;
-    
+
         float toe_limit = limit - 0.001;
         float toe_snJ_sat = snJ * p.sat;
         float toe_sqrt_nJ_sat_thr = sqrt(nJ * nJ + p.sat_thr);
@@ -518,7 +516,7 @@ float[3] chroma_compress_inv(float JMh[3],
         M = M * pow(tonemapped_J / J, -p.model_gamma_inv);
     }
 
-    float out[3] = { J, M, h};
+    float out[3] = {J, M, h};
     return out;
 }
 
@@ -534,7 +532,6 @@ float[3] tonemap_and_compress_fwd(float JMh[3],
 
     float J_ts = Y_to_J(tonemapped_Y, p.input_params);
 
-    // print("tonemapped_J (before chroma Compress):\n\t",J_ts,"\n");
     // Compress M; function returns { tonemapped J, compressed M, h }
     float JMh_tc[3] = chroma_compress_fwd(JMh, J_ts, p, false);
 
@@ -552,7 +549,7 @@ float[3] tonemap_and_compress_inv(float JMh_tc[3],
     float linear = tonescale_inv(luminance / ref_luminance, p.ts);
 
     float J = Y_to_J(linear * ref_luminance, p.input_params);
- 
+
     // Un-compress M; function returns { J, M, h }
     float JMh[3] = chroma_compress_inv(JMh_tc, J, p, true);
 
@@ -565,9 +562,12 @@ float compute_compression_vector_slope(float intersect_J,
                                        float slope_gain)
 {
     float direction_scalar;
-    if (intersect_J < focus_J) {
+    if (intersect_J < focus_J)
+    {
         direction_scalar = intersect_J;
-    } else {
+    }
+    else
+    {
         direction_scalar = limit_J_max - intersect_J;
     }
     return direction_scalar * (intersect_J - focus_J) / (focus_J * slope_gain);
@@ -606,7 +606,7 @@ float smin_scaled(float a,
                   float scale_reference)
 {
     const float s_scaled = smooth_cusps * scale_reference;
-    const float h = max( s_scaled - fabs(a - b), 0.0) / s_scaled;
+    const float h = max(s_scaled - fabs(a - b), 0.0) / s_scaled;
     return min(a, b) - h * h * h * s_scaled * (1. / 6.);
 }
 
@@ -686,15 +686,15 @@ float get_focus_gain(float J,
                      float focus_dist)
 {
     float gain = limit_J_max * focus_dist;
-    
+
     if (J > analytical_threshold)
     {
         // Approximate inverse required above threshold due to the introduction of J in the calculation
-        float gain_adjustment = log10( (limit_J_max - analytical_threshold) / max(0.0001, limit_J_max - J));
+        float gain_adjustment = log10((limit_J_max - analytical_threshold) / max(0.0001, limit_J_max - J));
         gain_adjustment = gain_adjustment * gain_adjustment + 1.;
         gain = gain * gain_adjustment;
     }
-    
+
     return gain;
 }
 
@@ -746,20 +746,13 @@ float[3] compress_gamut(float JMh[3],
                                                                     gamut_slope,
                                                                     J_intersect_cusp);
 
-    // print("slope_gain:\t",slope_gain,"\n");
-    // print("J_int_src:\t",J_intersect_source,"\n");
-    // print("gamut_slope:\t",gamut_slope,"\n");
-    // print("J_int_csp:\t",J_intersect_cusp,"\n");
-    // print("gamut_boundary_M:\t",gamut_boundary_M,"\n");
-                                                                
     if (gamut_boundary_M <= 0.)
     {
         float returnJMh[3] = {J, 0., h};
         return returnJMh;
     }
 
-    float reach_max_M = reach_M_from_table( h, p.TABLE_reach_M);
-    // print("reach_max_M:\t",reach_max_M,"\n");
+    float reach_max_M = reach_M_from_table(h, p.TABLE_reach_M);
 
     const float reach_boundary_M = estimate_line_and_boundary_intersection_M(J_intersect_source,
                                                                              gamut_slope,
@@ -768,11 +761,7 @@ float[3] compress_gamut(float JMh[3],
                                                                              reach_max_M,
                                                                              p.limit_J_max);
 
-    // print("reach_boundary_M:\t",reach_boundary_M,"\n");
-
     const float remapped_M = remap_M(M, gamut_boundary_M, reach_boundary_M, invert);
-
-    // print("remapped_M:\t",remapped_M,"\n");
 
     float JMhcompressed[3] = {J_intersect_source + remapped_M * gamut_slope,
                               remapped_M,
@@ -815,15 +804,15 @@ float[2] cusp_from_table(float h,
     return cusp_JM;
 }
 
-int lookup_hue_interval(float h, 
-                        float hue_table[totalTableSize], 
+int lookup_hue_interval(float h,
+                        float hue_table[totalTableSize],
                         int hue_linearity_search_range[2])
 {
     // Search the given table for the interval containing the desired hue
     // Returns the upper index of the interval
 
     // We can narrow the search range based on the hues being almost uniform
-    unsigned int i = baseIndex + hue_position_in_uniform_table(h, totalTableSize);  // TODO or just tableSize?
+    unsigned int i = baseIndex + hue_position_in_uniform_table(h, totalTableSize);
     unsigned int i_lo = max(baseIndex, i + hue_linearity_search_range[0]);
     unsigned int i_hi = min(baseIndex + tableSize, i + hue_linearity_search_range[1]);
 
@@ -840,19 +829,19 @@ int lookup_hue_interval(float h,
         i = midpoint(i_lo, i_hi);
     }
 
-    i_hi = max( 1, i_hi);
+    i_hi = max(1, i_hi);
 
     return i_hi;
 }
 
-float interpolation_weight( float h, float h_lo, float h_hi)
+float interpolation_weight(float h, float h_lo, float h_hi)
 {
     return (h - h_lo);
 }
 
-float compute_focus_J( float cusp_J, float mid_J, float limit_J_max)
+float compute_focus_J(float cusp_J, float mid_J, float limit_J_max)
 {
-    return lerp( cusp_J, mid_J, min(1, cusp_mid_blend - (cusp_J / limit_J_max)));
+    return lerp(cusp_J, mid_J, min(1, cusp_mid_blend - (cusp_J / limit_J_max)));
 }
 
 HueDependentGamutParams init_HueDependentGamutParams(float hue, ODTParams p)
@@ -878,25 +867,19 @@ float[3] gamut_compress_fwd(float JMh[3],
     const float M = JMh[1];
     const float h = JMh[2];
 
-    if (J <= 0.0) {
+    if (J <= 0.0)
+    {
         float JMh[3] = {0., 0., h};
         return JMh;
     }
 
-    if (M < 0. || J > p.limit_J_max) {
+    if (M < 0. || J > p.limit_J_max)
+    {
         float JMh[3] = {J, 0., h};
         return JMh;
     }
 
-    HueDependentGamutParams hdp = init_HueDependentGamutParams( h, p);
-
-    // print("reachMaxM:\n\t", reach_M_from_table(h, p.TABLE_reach_M), "\n");
-
-    // print("HDP:\n");
-    // print("\tHDP.JMcusp = { ", hdp.JMcusp[0], hdp.JMcusp[1], " }\n");
-    // print("\tHDP.gamma_top_inv = ", hdp.gamma_top_inv, "\n");
-    // print("\tHDP.focus_J = ", hdp.focus_J, "\n");
-    // print("\tHDP.analy_thres = ", hdp.analytical_threshold, "\n");
+    HueDependentGamutParams hdp = init_HueDependentGamutParams(h, p);
 
     return compress_gamut(JMh, J, p, hdp, false);
 }
@@ -908,20 +891,23 @@ float[3] gamut_compress_inv(float JMh[3],
     const float M = JMh[1];
     const float h = JMh[2];
 
-    if (J <= 0.0) {
+    if (J <= 0.0)
+    {
         float JMh[3] = {0., 0., h};
         return JMh;
     }
-    if (M < 0. || J > p.limit_J_max) {
+    if (M < 0. || J > p.limit_J_max)
+    {
         float JMh[3] = {J, 0., h};
         return JMh;
     }
 
-    HueDependentGamutParams hdp = init_HueDependentGamutParams( h, p);
+    HueDependentGamutParams hdp = init_HueDependentGamutParams(h, p);
 
     float Jx = J;
 
-    if (Jx > hdp.analytical_threshold) {
+    if (Jx > hdp.analytical_threshold)
+    {
         Jx = compress_gamut(JMh, Jx, p, hdp, true)[0];
     }
 
@@ -1012,11 +998,20 @@ JMhParams init_JMhParams(Chromaticities prims)
 float[3] generate_unit_cube_cusp_corners(int corner)
 {
     float result[3];
- 
+
     // Generation order R, Y, G, C, B, M to ensure hues rotate in correct order
-    if (((corner + 1) % cuspCornerCount) < 3) result[0] = 1; else result[0] = 0;
-    if (((corner + 5) % cuspCornerCount) < 3) result[1] = 1; else result[1] = 0;
-    if (((corner + 3) % cuspCornerCount) < 3) result[2] = 1; else result[2] = 0;
+    if (((corner + 1) % cuspCornerCount) < 3)
+        result[0] = 1;
+    else
+        result[0] = 0;
+    if (((corner + 5) % cuspCornerCount) < 3)
+        result[1] = 1;
+    else
+        result[1] = 0;
+    if (((corner + 3) % cuspCornerCount) < 3)
+        result[2] = 1;
+    else
+        result[2] = 0;
 
     return result;
 }
@@ -1035,9 +1030,10 @@ void build_limiting_cusp_corners_tables(output float RGB_corners[totalCornerCoun
     int min_index = 0;
     for (int i = 0; i != cuspCornerCount; i = i + 1)
     {
-        temp_RGB_corners[i] = mult_f_f3( peakLuminance / ref_luminance, generate_unit_cube_cusp_corners(i));
-        temp_JMh_corners[i] = RGB_to_JMh( temp_RGB_corners[i], params);
-        if (temp_JMh_corners[i][2] < temp_JMh_corners[min_index][2]) min_index = 1;
+        temp_RGB_corners[i] = mult_f_f3(peakLuminance / ref_luminance, generate_unit_cube_cusp_corners(i));
+        temp_JMh_corners[i] = RGB_to_JMh(temp_RGB_corners[i], params);
+        if (temp_JMh_corners[i][2] < temp_JMh_corners[min_index][2])
+            min_index = 1;
     }
 
     // Rotate entries placing lowest at [1] (not [0])
@@ -1061,24 +1057,24 @@ void build_limiting_cusp_corners_tables(output float RGB_corners[totalCornerCoun
 }
 
 float[totalCornerCount][3] find_reach_corners_table(JMhParams params_reach,
-                                                    ODTParams p )
+                                                    ODTParams p)
 {
     // We need to find the value of JMh that corresponds to limitJ for each
     // corner This is done by scaling the unit corners converting to JMh until
     // the J value is near the limitJ
     // As an optimisation we use the equivalent Achromatic value to search for
-    // the J value and avoid the non-linear transform during the search. 
+    // the J value and avoid the non-linear transform during the search.
     // Strictly speaking we should only need to find the R, G and  B "corners"
     // as the reach is unbounded and as such does not form a cube, but is formed
     // by the transformed 3 lower planes of the cube and the plane at J = limitJ
     float temp_JMh_corners[cuspCornerCount][3];
-    
+
     float JMh_corners[totalCornerCount][3];
 
     float limitA = J_to_Achromatic_n(p.limit_J_max, params_reach.inv_cz);
 
     int min_index = 0;
-    for (int i = 0; i != cuspCornerCount; i = i + 1)  // TODO Change back to cuspCornerCount
+    for (int i = 0; i != cuspCornerCount; i = i + 1)
     {
         const float rgb_vector[3] = generate_unit_cube_cusp_corners(i);
 
@@ -1106,7 +1102,7 @@ float[totalCornerCount][3] find_reach_corners_table(JMhParams params_reach,
             min_index = i;
     }
 
-    // Rotate entries placing lowest at [1] (not [0]) // TODO: could use std::rotate_copy or even the ranges vs in C++20
+    // Rotate entries placing lowest at [1] (not [0])
     for (int i = 0; i != cuspCornerCount; i = i + 1)
     {
         JMh_corners[i + 1] = temp_JMh_corners[(i + min_index) % cuspCornerCount];
@@ -1141,7 +1137,7 @@ float[max_sorted_corners] extract_sorted_cube_hues(float reach_JMh[totalCornerCo
         {
             sorted_hues[idx] = reach_hue;
             reach_idx = reach_idx + 1;
-            limit_idx = limit_idx +1; // When equal consume both
+            limit_idx = limit_idx + 1; // When equal consume both
         }
         else
         {
@@ -1153,10 +1149,10 @@ float[max_sorted_corners] extract_sorted_cube_hues(float reach_JMh[totalCornerCo
             else
             {
                 sorted_hues[idx] = limit_hue;
-                limit_idx = limit_idx +1;
+                limit_idx = limit_idx + 1;
             }
-      }
-      idx = idx + 1;
+        }
+        idx = idx + 1;
     }
     return sorted_hues;
 }
@@ -1168,9 +1164,9 @@ float[totalTableSize] build_hue_sample_interval(int samples,
                                                 int base)
 {
     float mod_hue_table[totalTableSize] = hue_table;
-    float delta = (upper-lower)/samples;
+    float delta = (upper - lower) / samples;
     int i;
-    for (i=0; i != samples; i = i + 1)
+    for (i = 0; i != samples; i = i + 1)
     {
         mod_hue_table[base + i] = lower + i * delta;
     }
@@ -1186,13 +1182,20 @@ float[totalTableSize] build_hue_table(float sorted_hues[max_sorted_corners])
     int samples_count[2 * cuspCornerCount + 2];
     int last_idx;
     int min_index;
-        if (sorted_hues[0] == 0.0) {min_index = 0;} else {min_index = 1;}
+    if (sorted_hues[0] == 0.0)
+    {
+        min_index = 0;
+    }
+    else
+    {
+        min_index = 1;
+    }
     int hue_idx;
 
     for (hue_idx = 0; hue_idx != max_sorted_corners; hue_idx = hue_idx + 1)
     {
         float raw_idx = round(sorted_hues[hue_idx] * ideal_spacing);
-        int nominal_idx = min( max( round( sorted_hues[hue_idx] * ideal_spacing), min_index), tableSize - 1);
+        int nominal_idx = min(max(round(sorted_hues[hue_idx] * ideal_spacing), min_index), tableSize - 1);
 
         if (last_idx == nominal_idx)
         {
@@ -1205,9 +1208,9 @@ float[totalTableSize] build_hue_table(float sorted_hues[max_sorted_corners])
             else
             {
                 nominal_idx = nominal_idx + 1;
-            }            
+            }
         }
-        samples_count[hue_idx] = min( nominal_idx, tableSize - 1);
+        samples_count[hue_idx] = min(nominal_idx, tableSize - 1);
         min_index = nominal_idx;
         last_idx = min_index;
     }
@@ -1215,30 +1218,19 @@ float[totalTableSize] build_hue_table(float sorted_hues[max_sorted_corners])
     int total_samples = 0;
     // Special cases for ends
     int i = 0;
-    hue_table = build_hue_sample_interval( samples_count[i], 0.0, sorted_hues[i], hue_table, total_samples + 1);
+    hue_table = build_hue_sample_interval(samples_count[i], 0.0, sorted_hues[i], hue_table, total_samples + 1);
     total_samples = total_samples + samples_count[i];
-    // print("\ninitial_hue_table:/n");
-    // print_table_f(hue_table);
-    // print("\ntotal_samples[i]:\t",total_samples);
-    // print("\ni:\t",i);        
-    
-    for (i=i+1; i != max_sorted_corners; i=i+1)
+
+    for (i = i + 1; i != max_sorted_corners; i = i + 1)
     {
         int samples = samples_count[i] - samples_count[i - 1];
         hue_table = build_hue_sample_interval(samples, sorted_hues[i - 1], sorted_hues[i], hue_table, total_samples + 1);
         total_samples = total_samples + samples;
-
-        // print("\nsamples:\t",samples);
-        // print("\ntotal_samples[i]:\t",total_samples);
     }
-    // Potential bug: Could break if we are unlucky with samples being used up by this point
-    hue_table = build_hue_sample_interval( tableSize - total_samples, sorted_hues[i-1], hue_limit, hue_table, total_samples + 1);
+    hue_table = build_hue_sample_interval(tableSize - total_samples, sorted_hues[i - 1], hue_limit, hue_table, total_samples + 1);
 
     hue_table[0] = hue_table[baseIndex + tableSize - 1] - hue_limit;
     hue_table[baseIndex + tableSize] = hue_table[baseIndex] + hue_limit;
-
-    // print("\n3rd iteration:/n");
-    // print_table_f(hue_table);
 
     return hue_table;
 }
@@ -1282,7 +1274,8 @@ float[2] find_display_cusp_for_hue(float hue,
 
     float sample_t;
     float lower_t = 0.0;
-    if (upper_corner == previous[0]) lower_t = previous[1];
+    if (upper_corner == previous[0])
+        lower_t = previous[1];
     float upper_t = 1.0;
 
     float JMh[3];
@@ -1295,8 +1288,8 @@ float[2] find_display_cusp_for_hue(float hue,
     while ((upper_t - lower_t) > display_cusp_tolerance)
     {
         sample_t = midpoint(lower_t, upper_t);
-        sample   = lerp_f3(cusp_lower, cusp_upper, sample_t);
-        JMh      = RGB_to_JMh(sample, params);
+        sample = lerp_f3(cusp_lower, cusp_upper, sample_t);
+        JMh = RGB_to_JMh(sample, params);
         if (JMh[2] < JMh_corners[lower_corner][2])
         {
             upper_t = sample_t;
@@ -1355,12 +1348,12 @@ float[totalTableSize][3] build_cusp_table(float hue_table[totalTableSize],
     output_table[baseIndex + tableSize][1] = output_table[baseIndex][1];
     output_table[baseIndex + tableSize][2] = hue_table[baseIndex + tableSize];
 
-    return output_table;    
+    return output_table;
 }
 
 float[totalTableSize][3] make_uniform_hue_gamut_table(JMhParams reach_params,
                                                       JMhParams limit_params,
-                                                      ODTParams p )
+                                                      ODTParams p)
 {
     // The principal here is to sample the hues as uniformly as possible, whilst
     // ensuring we sample the corners of the limiting gamut and the reach
@@ -1378,7 +1371,7 @@ float[totalTableSize][3] make_uniform_hue_gamut_table(JMhParams reach_params,
     build_limiting_cusp_corners_tables(limiting_RGB_corners, limiting_JMh_corners, limit_params, p.peakLuminance);
     float sorted_hues[max_sorted_corners] = extract_sorted_cube_hues(reach_JMh_corners,
                                                                      limiting_JMh_corners);
-                                                                     
+
     float hue_table[totalTableSize] = build_hue_table(sorted_hues);
 
     float cusp_JMh_table[totalTableSize][3] = build_cusp_table(hue_table, limiting_RGB_corners, limiting_JMh_corners, limit_params);
@@ -1451,7 +1444,8 @@ bool outside_hull(float rgb[3], float maxRGBtestVal)
 const int test_count = 5;
 const float testPositions[test_count] = {0.01, 0.1, 0.5, 0.8, 0.99};
 
-struct TestData {
+struct TestData
+{
     float test_JMh[3];
     float J_intersect_source;
     float slope;
@@ -1470,9 +1464,6 @@ void generate_gamma_test_data(input float JMcusp[2],
 {
     float analytical_threshold = lerp(JMcusp[0], limit_J_max, focus_gain_blend);
     float focus_J = compute_focus_J(JMcusp[0], mid_J, limit_J_max);
-    // print("any_thres:\t",analytical_threshold,"\n");
-    // print("focusJ:\t",focus_J,"\n");
-    // print("limit_J_max:\t\t",limit_J_max,"\n");
 
     for (int testIndex = 0; testIndex != test_count; testIndex = testIndex + 1)
     {
@@ -1489,7 +1480,7 @@ void generate_gamma_test_data(input float JMcusp[2],
         J_intersect_source[testIndex] = J_intersect;
         slopes[testIndex] = slope;
         J_intersect_cusp[testIndex] = J_cusp;
-
+    }
 }
 
 bool evaluate_gamma_fit(float JMcusp[2],
@@ -1516,15 +1507,16 @@ bool evaluate_gamma_fit(float JMcusp[2],
                                                                slopes[testIndex],
                                                                J_intersect_cusp[testIndex]);
         float approxLimit_J = J_intersect_source[testIndex] + slopes[testIndex] * approxLimit_M;
-        
+
         // Store JMh values
         float approximate_JMh[3] = {approxLimit_J, approxLimit_M, test_JMh[testIndex][2]};
 
-        //Convert to RGB
+        // Convert to RGB
         float newLimitRGB[3] = JMh_to_RGB(approximate_JMh, limit_params);
 
         // Check if any values exceed the luminance limit. If so, we are outside of the top gamut shell.
-        if (!outside_hull(newLimitRGB,luminance_limit)) return false;
+        if (!outside_hull(newLimitRGB, luminance_limit))
+            return false;
     }
 
     return true;
@@ -1547,13 +1539,9 @@ float[totalTableSize] make_upper_hull_gamma_table(float gamutCuspTable[totalTabl
 
     for (int i = baseIndex; i != baseIndex + tableSize; i = i + 1)
     {
-        // print( i, "\t", gamutCuspTable[i][2], "\n");
         // Get cusp from cusp table at hue position
         float hue = gamutCuspTable[i][2];
-        float JMcusp[2] = { gamutCuspTable[i][0], gamutCuspTable[i][1] };
-
-        // print("hue:\t",hue,"\n");
-        // print("JMcusp:\t{",JMcusp[0],", ",JMcusp[1],"}\n");
+        float JMcusp[2] = {gamutCuspTable[i][0], gamutCuspTable[i][1]};
 
         float test_JMh[test_count][3];
         float J_intersect_source[test_count];
@@ -1562,16 +1550,16 @@ float[totalTableSize] make_upper_hull_gamma_table(float gamutCuspTable[totalTabl
 
         generate_gamma_test_data(JMcusp, hue, p.limit_J_max, p.mid_J, p.focus_dist,
                                  test_JMh, J_intersect_source, slopes, J_intersect_cusp);
-        
+
         float search_range = gamma_search_step;
         float low = gamma_minimum;
         float high = low + search_range;
         bool outside = false;
         while (!(outside) && (high < gamma_maximum))
         {
-            bool gammaFound = evaluate_gamma_fit(JMcusp, 
-                                                 test_JMh, J_intersect_source, slopes, J_intersect_cusp, 
-                                                 1./high, 
+            bool gammaFound = evaluate_gamma_fit(JMcusp,
+                                                 test_JMh, J_intersect_source, slopes, J_intersect_cusp,
+                                                 1. / high,
                                                  p.peakLuminance, p.limit_J_max, p.lower_hull_gamma_inv, p.limit_params);
             if (!gammaFound)
             {
@@ -1590,7 +1578,7 @@ float[totalTableSize] make_upper_hull_gamma_table(float gamutCuspTable[totalTabl
             testGamma = midpoint(high, low);
             bool gammaFound = evaluate_gamma_fit(JMcusp,
                                                  test_JMh, J_intersect_source, slopes, J_intersect_cusp,
-                                                 1./testGamma,
+                                                 1. / testGamma,
                                                  p.peakLuminance, p.limit_J_max, p.lower_hull_gamma_inv, p.limit_params);
             if (gammaFound)
             {
@@ -1602,7 +1590,7 @@ float[totalTableSize] make_upper_hull_gamma_table(float gamutCuspTable[totalTabl
             }
         }
 
-        upper_hull_gamma[i] = 1./high;
+        upper_hull_gamma[i] = 1. / high;
     }
 
     // Copy last populated entry to first empty spot
@@ -1624,12 +1612,12 @@ int[2] determine_hue_linearity_search_range(float hue_table[])
 
     const int lower_padding = 0;
     const int upper_padding = 1;
-    
+
     int hue_linearity_search_range[2] = {lower_padding, upper_padding};
 
     for (int i = baseIndex; i != baseIndex + tableSize; i = i + 1)
     {
-        const int pos = hue_position_in_uniform_table(hue_table[i],totalTableSize);
+        const int pos = hue_position_in_uniform_table(hue_table[i], totalTableSize);
         const int delta = i - pos;
         hue_linearity_search_range[0] = min(hue_linearity_search_range[0], delta + lower_padding);
         hue_linearity_search_range[1] = max(hue_linearity_search_range[1], delta + upper_padding);
@@ -1646,25 +1634,17 @@ ODTParams init_ODTParams(float peakLuminance,
     p.peakLuminance = peakLuminance;
 
     // JMh parameters
-    p.input_params = init_JMhParams( AP0);
-    p.reach_params = init_JMhParams( REACH_PRI);
-    p.limit_params = init_JMhParams( limitingPrimaries);
-
-    // print("input:\n");
-    // print_f33( transpose_f33(p.input_params.MATRIX_RGB_to_CAM16_c));
-    // print_f33( transpose_f33(p.input_params.MATRIX_cone_response_to_Aab));
-    // print("reach:\n");
-    // print_f33( transpose_f33(p.reach_params.MATRIX_RGB_to_CAM16_c));
-    // print("limit:\n");
-    // print_f33( transpose_f33(p.limit_params.MATRIX_RGB_to_CAM16_c));
+    p.input_params = init_JMhParams(AP0);
+    p.reach_params = init_JMhParams(REACH_PRI);
+    p.limit_params = init_JMhParams(limitingPrimaries);
 
     // Tonescale parameters
     p.ts = init_TSParams(peakLuminance);
-    
+
     // Shared compression paramters
-    p.limit_J_max = Y_to_J( peakLuminance, p.input_params);
+    p.limit_J_max = Y_to_J(peakLuminance, p.input_params);
     p.model_gamma_inv = 1. / model_gamma;
-    p.TABLE_reach_M = make_reach_m_table( p.reach_params, p.limit_J_max);
+    p.TABLE_reach_M = make_reach_m_table(p.reach_params, p.limit_J_max);
 
     // Chroma compression parameters
     p.sat = max(0.2, chroma_expand - (chroma_expand * chroma_expand_fact) * p.ts.log_peak);
@@ -1685,25 +1665,19 @@ ODTParams init_ODTParams(float peakLuminance,
     p.TABLE_upper_hull_gamma = make_upper_hull_gamma_table(p.TABLE_gamut_cusps, p);
     p.hue_linearity_search_range = determine_hue_linearity_search_range(p.TABLE_hues);
 
-    // Parameters passed to display encoding
-    float RGB_w[3] = f3_from_f( 100.);
-    p.XYZ_w_limit = mult_f3_f33(RGB_w, XYZtoRGB_f33(limitingPrimaries, 1.0) );
-
-    // print("hlsr: ", p.hue_linearity_search_range[0], ", ", p.hue_linearity_search_range[1], "\n");
-
     return p;
 }
 
 float[3] outputTransform_fwd(float aces[3],
                              ODTParams p)
 {
-    float AP0_clamped[3] = clamp_AP0_to_AP1( aces, 0., p.ts.forward_limit);
+    float AP0_clamped[3] = clamp_AP0_to_AP1(aces, 0., p.ts.forward_limit);
 
     float JMh[3] = RGB_to_JMh(AP0_clamped, p.input_params);
 
     float tonemappedJMh[3] = tonemap_and_compress_fwd(JMh, p);
 
-    float compressedJMh[3] = gamut_compress_fwd(tonemappedJMh,p);
+    float compressedJMh[3] = gamut_compress_fwd(tonemappedJMh, p);
 
     float RGBout[3] = JMh_to_RGB(compressedJMh, p.limit_params);
 
