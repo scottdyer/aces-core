@@ -781,12 +781,38 @@ float[3] getReachBoundary(float J,
         slope = intersectJ * (intersectJ - focusJ) / (focusJ * slope_gain);
     }
     else
+float[2] cusp_from_table(float h,
+                         float table[][3])
+{
+    float lo[3];
+    float hi[3];
+
+    int low_i = 0;
+    int high_i = baseIndex + tableSize;
+    int i = hue_position_in_uniform_table(h, tableSize) + baseIndex;
+
+    while (low_i + 1 < high_i)
     {
-        slope = (limitJmax - intersectJ) * (intersectJ - focusJ) / (focusJ * slope_gain);
+        if (h > table[i][2])
+        {
+            low_i = i;
+        }
+        else
+        {
+            high_i = i;
+        }
+        i = midpoint(low_i, high_i);
     }
-    float boundary = limitJmax * pow(intersectJ / limitJmax, model_gamma) * reachMaxM / (limitJmax - slope * reachMaxM);
-    float result[3] = {J, boundary, h};
-    return result;
+    lo = table[high_i - 1];
+    hi = table[high_i];
+
+    float t = (h - lo[2]) / (hi[2] - lo[2]);
+    float cusp_J = lerp(lo[0], hi[0], t);
+    float cusp_M = lerp(lo[1], hi[1], t);
+
+    float cusp_JM[2] = {cusp_J, cusp_M};
+
+    return cusp_JM;
 }
 
 float[3] compressGamut(float JMh[3],
@@ -796,19 +822,38 @@ float[3] compressGamut(float JMh[3],
                        float gamutTopGamma[],
                        float reachTable[],
                        bool invert = false)
+int lookup_hue_interval(float h, 
+                        float hue_table[totalTableSize], 
+                        int hue_linearity_search_range[2])
 {
     float limitJmax = PARAMS.limitJmax;
     float midJ = PARAMS.midJ;
     float focusDist = PARAMS.focusDist;
     float model_gamma = PARAMS.model_gamma;
+    // Search the given table for the interval containing the desired hue
+    // Returns the upper index of the interval
 
     float project_from[2] = {JMh[0], JMh[1]};
     float JMcusp[2] = cuspFromTable(JMh[2], gamutCuspTable);
+    // We can narrow the search range based on the hues being almost uniform
+    unsigned int i = baseIndex + hue_position_in_uniform_table(h, totalTableSize);  // TODO or just tableSize?
+    unsigned int i_lo = max(baseIndex, i + hue_linearity_search_range[0]);
+    unsigned int i_hi = min(baseIndex + tableSize, i + hue_linearity_search_range[1]);
 
     if (JMh[1] < 0.0001 || JMh[0] > limitJmax)
+    while (i_lo + 1 < i_hi)
     {
         float JMh_return[3] = {JMh[0], 0.0, JMh[2]};
         return JMh_return;
+        if (h > hue_table[i])
+        {
+            i_lo = i;
+        }
+        else
+        {
+            i_hi = i;
+        }
+        i = midpoint(i_lo, i_hi);
     }
 
     // Calculate where the out of gamut color is projected to
@@ -1020,79 +1065,404 @@ JMhParams init_JMhParams(Chromaticities prims)
     return p;
 }
 
-float[totalTableSize][3] make_gamut_table(Chromaticities C,
-                                          float peakLuminance)
+float[3] generate_unit_cube_cusp_corners(int corner)
 {
-    const float RGB_TO_XYZ_M[3][3] = RGBtoXYZ_f33(C, 1.0);
+    float result[3];
+ 
+    // Generation order R, Y, G, C, B, M to ensure hues rotate in correct order
+    if (((corner + 1) % cuspCornerCount) < 3) result[0] = 1; else result[0] = 0;
+    if (((corner + 5) % cuspCornerCount) < 3) result[1] = 1; else result[1] = 0;
+    if (((corner + 3) % cuspCornerCount) < 3) result[2] = 1; else result[2] = 0;
 
-    float gamutCuspTableUnsorted[gamutTableSize][3];
+    return result;
+}
 
+void build_limiting_cusp_corners_tables(output float RGB_corners[totalCornerCount][3],
+                                        output float JMh_corners[totalCornerCount][3],
+                                        input JMhParams params,
+                                        input float peakLuminance)
+{
+    // We calculate the RGB and JMh values for the limiting gamut cusp corners
+    // They are then arranged into a cycle with the lowest JMh value at [1] to
+    // allow for hue wrapping
+    float temp_RGB_corners[cuspCornerCount][3];
+    float temp_JMh_corners[cuspCornerCount][3];
+
+    int min_index = 0;
+    for (int i = 0; i != cuspCornerCount; i = i + 1)
+    {
+        temp_RGB_corners[i] = mult_f_f3( peakLuminance / referenceLuminance, generate_unit_cube_cusp_corners(i));
+        temp_JMh_corners[i] = RGB_to_JMh( temp_RGB_corners[i], params);
+        if (temp_JMh_corners[i][2] < temp_JMh_corners[min_index][2]) min_index = 1;
+    }
+
+    // Rotate entries placing lowest at [1] (not [0])
+    for (int i = 0; i != cuspCornerCount; i = i + 1)
+    {
+        RGB_corners[i + 1] = temp_RGB_corners[(i + min_index) % cuspCornerCount];
+        JMh_corners[i + 1] = temp_JMh_corners[(i + min_index) % cuspCornerCount];
+    }
+
+    // Copy end elements to create a cycle
+    RGB_corners[0] = RGB_corners[cuspCornerCount];
+    RGB_corners[cuspCornerCount + 1] = RGB_corners[1];
+    JMh_corners[0] = JMh_corners[cuspCornerCount];
+    JMh_corners[cuspCornerCount + 1] = JMh_corners[1];
+
+    // Wrap the hues, to maintain monotonicity these entries will fall outside [0.0, hue_limit)
+    JMh_corners[0][2] = JMh_corners[0][2] - hue_limit;
+    JMh_corners[cuspCornerCount + 1][2] = JMh_corners[cuspCornerCount + 1][2] + hue_limit;
+
+    // return JMh_corners;
+}
+
+float[totalCornerCount][3] find_reach_corners_table(JMhParams params_reach,
+                                                    ODTParams p )
+{
+    // We need to find the value of JMh that corresponds to limitJ for each
+    // corner This is done by scaling the unit corners converting to JMh until
+    // the J value is near the limitJ
+    // As an optimisation we use the equivalent Achromatic value to search for
+    // the J value and avoid the non-linear transform during the search. 
+    // Strictly speaking we should only need to find the R, G and  B "corners"
+    // as the reach is unbounded and as such does not form a cube, but is formed
+    // by the transformed 3 lower planes of the cube and the plane at J = limitJ
+    float temp_JMh_corners[cuspCornerCount][3];
+    
+    float JMh_corners[totalCornerCount][3];
+
+    float limitA = J_to_Achromatic_n(p.limit_J_max, params_reach.inv_cz);
+
+    int min_index = 0;
+    for (int i = 0; i != cuspCornerCount; i = i + 1)  // TODO Change back to cuspCornerCount
+    {
+        const float rgb_vector[3] = generate_unit_cube_cusp_corners(i);
+
+        float lower = 0.0;
+        float upper = p.ts.forward_limit;
+
+        while ((upper - lower) > reach_cusp_tolerance)
+        {
+            float test = (lower + upper) / 2.;
+            float test_corner[3] = mult_f_f3(test, rgb_vector);
+            float A = RGB_to_Aab(test_corner, params_reach)[0];
+            if (A < limitA)
+            {
+                lower = test;
+            }
+            else
+            {
+                upper = test;
+            }
+        }
+
+        temp_JMh_corners[i] = RGB_to_JMh(mult_f_f3(upper, rgb_vector), params_reach);
+
+        if (temp_JMh_corners[i][2] < temp_JMh_corners[min_index][2])
+            min_index = i;
+    }
+
+    // Rotate entries placing lowest at [1] (not [0]) // TODO: could use std::rotate_copy or even the ranges vs in C++20
+    for (int i = 0; i != cuspCornerCount; i = i + 1)
+    {
+        JMh_corners[i + 1] = temp_JMh_corners[(i + min_index) % cuspCornerCount];
+    }
+
+    // Copy end elements to create a cycle
+    JMh_corners[0] = JMh_corners[cuspCornerCount];
+    JMh_corners[cuspCornerCount + 1] = JMh_corners[1];
+
+    // Wrap the hues, to maintain monotonicity these entries will fall outside [0.0, hue_limit)
+    JMh_corners[0][2] = JMh_corners[0][2] - hue_limit;
+    JMh_corners[cuspCornerCount + 1][2] = JMh_corners[cuspCornerCount + 1][2] + hue_limit;
+
+    return JMh_corners;
+}
+
+float[max_sorted_corners] extract_sorted_cube_hues(float reach_JMh[totalCornerCount][3],
+                                                   float limit_JMh[totalCornerCount][3])
+{
+    float sorted_hues[max_sorted_corners];
+
+    // Basic merge of 2 sorted arrays, extracting the unique hues.
+    // Return the count of the unique hues
+    int idx = 0;
+    int reach_idx = 1;
+    int limit_idx = 1;
+    while ((reach_idx < (cuspCornerCount + 1)) || (limit_idx < (cuspCornerCount + 1)))
+    {
+        float reach_hue = reach_JMh[reach_idx][2];
+        float limit_hue = limit_JMh[limit_idx][2];
+        if (reach_hue == limit_hue)
+        {
+            sorted_hues[idx] = reach_hue;
+            reach_idx = reach_idx + 1;
+            limit_idx = limit_idx +1; // When equal consume both
+        }
+        else
+        {
+            if (reach_hue < limit_hue)
+            {
+                sorted_hues[idx] = reach_hue;
+                reach_idx = reach_idx + 1;
+            }
+            else
+            {
+                sorted_hues[idx] = limit_hue;
+                limit_idx = limit_idx +1;
+            }
+      }
+      idx = idx + 1;
+    }
+    return sorted_hues;
+}
+
+float[totalTableSize] build_hue_sample_interval(int samples,
+                                                float lower,
+                                                float upper,
+                                                float hue_table[totalTableSize],
+                                                int base)
+{
+    float mod_hue_table[totalTableSize] = hue_table;
+    float delta = (upper-lower)/samples;
     int i;
-    for (i = 0; i < gamutTableSize; i = i + 1)
+    for (i=0; i != samples; i = i + 1)
     {
-        float i_float = i;
-        float hNorm = i_float / gamutCuspTableUnsorted.size;
-
-        float HSV[3] = {hNorm, 1., 1.};
-        float RGB[3] = HSV_to_RGB(HSV);
-
-        gamutCuspTableUnsorted[i] = RGB_to_JMh(RGB,
-                                               RGB_TO_XYZ_M,
-                                               peakLuminance);
+        mod_hue_table[base + i] = lower + i * delta;
     }
 
-    int minhIndex = 0;
-    for (i = 0; i < gamutTableSize; i = i + 1)
+    return mod_hue_table;
+}
+
+float[totalTableSize] build_hue_table(float sorted_hues[max_sorted_corners])
+{
+    float hue_table[totalTableSize];
+
+    float ideal_spacing = tableSize / hue_limit;
+    int samples_count[2 * cuspCornerCount + 2];
+    int last_idx;
+    int min_index;
+        if (sorted_hues[0] == 0.0) {min_index = 0;} else {min_index = 1;}
+    int hue_idx;
+
+    for (hue_idx = 0; hue_idx != max_sorted_corners; hue_idx = hue_idx + 1)
     {
-        if (gamutCuspTableUnsorted[i][2] < gamutCuspTableUnsorted[minhIndex][2])
-            minhIndex = i;
+        float raw_idx = round(sorted_hues[hue_idx] * ideal_spacing);
+        int nominal_idx = min( max( round( sorted_hues[hue_idx] * ideal_spacing), min_index), tableSize - 1);
+
+        if (last_idx == nominal_idx)
+        {
+            // Last two hues should sample at same index, need to adjust them
+            // Adjust previous sample down if we can
+            if (hue_idx > 1 && samples_count[hue_idx - 2] != (samples_count[hue_idx - 1] - 1))
+            {
+                samples_count[hue_idx - 1] = samples_count[hue_idx - 1] - 1;
+            }
+            else
+            {
+                nominal_idx = nominal_idx + 1;
+            }            
+        }
+        samples_count[hue_idx] = min( nominal_idx, tableSize - 1);
+        min_index = nominal_idx;
+        last_idx = min_index;
     }
 
-    float gamutCuspTable[totalTableSize][3]; // allocate 2 extra entries to ease the code to handle hues wrapping around
-    for (i = 0; i < gamutTableSize; i = i + 1)
+    int total_samples = 0;
+    // Special cases for ends
+    int i = 0;
+    hue_table = build_hue_sample_interval( samples_count[i], 0.0, sorted_hues[i], hue_table, total_samples + 1);
+    total_samples = total_samples + samples_count[i];
+    // print("\ninitial_hue_table:/n");
+    // print_table_f(hue_table);
+    // print("\ntotal_samples[i]:\t",total_samples);
+    // print("\ni:\t",i);        
+    
+    for (i=i+1; i != max_sorted_corners; i=i+1)
     {
-        gamutCuspTable[i + baseIndex] = gamutCuspTableUnsorted[(minhIndex + i) % gamutTableSize];
+        int samples = samples_count[i] - samples_count[i - 1];
+        hue_table = build_hue_sample_interval(samples, sorted_hues[i - 1], sorted_hues[i], hue_table, total_samples + 1);
+        total_samples = total_samples + samples;
+
+        // print("\nsamples:\t",samples);
+        // print("\ntotal_samples[i]:\t",total_samples);
+    }
+    // Potential bug: Could break if we are unlucky with samples being used up by this point
+    hue_table = build_hue_sample_interval( tableSize - total_samples, sorted_hues[i-1], hue_limit, hue_table, total_samples + 1);
+
+    hue_table[0] = hue_table[baseIndex + tableSize - 1] - hue_limit;
+    hue_table[baseIndex + tableSize] = hue_table[baseIndex] + hue_limit;
+
+    // print("\n3rd iteration:/n");
+    // print_table_f(hue_table);
+
+    return hue_table;
+}
+
+float[2] find_display_cusp_for_hue(float hue,
+                                   float RGB_corners[totalCornerCount][3],
+                                   float JMh_corners[totalCornerCount][3],
+                                   JMhParams params,
+                                   float previous[2])
+{
+    // This works by finding the required line segment between two of the XYZ
+    // cusp corners, then binary searching along the line calculating the JMh of
+    // points along the line till we find the required value. All values on the
+    // line segments are valid cusp locations.
+    float return_JM[2];
+
+    int upper_corner = 1;
+    int found = 0;
+    for (int i = upper_corner; i != totalCornerCount && !found; i = i + 1)
+    {
+        if (JMh_corners[i][2] > hue)
+        {
+            upper_corner = i;
+            found = 1;
+        }
+    }
+    int lower_corner = upper_corner - 1;
+
+    // hue should now be within [lower_corner, upper_corner), handle exact match
+    if (JMh_corners[lower_corner][2] == hue)
+    {
+        return_JM[0] = JMh_corners[lower_corner][0];
+        return_JM[1] = JMh_corners[lower_corner][1];
+        return return_JM;
     }
 
-    // Copy last populated entry to first empty spot
-    gamutCuspTable[0] = gamutCuspTable[baseIndex + gamutTableSize - 1];
+    // search by lerping between RGB corners for the hue
+    float cusp_lower[3] = RGB_corners[lower_corner];
+    float cusp_upper[3] = RGB_corners[upper_corner];
+    float sample[3];
 
-    // Copy first populated entry to last empty spot
-    gamutCuspTable[baseIndex + gamutTableSize] = gamutCuspTable[baseIndex];
+    float sample_t;
+    float lower_t = 0.0;
+    if (upper_corner == previous[0]) lower_t = previous[1];
+    float upper_t = 1.0;
 
-    // Wrap the hues, to maintain monotonicity. These entries will fall outside [0.0, 360.0]
-    gamutCuspTable[0][2] = gamutCuspTable[0][2] - 360.0;
-    gamutCuspTable[gamutTableSize + 1][2] = gamutCuspTable[gamutTableSize + 1][2] + 360.0;
+    float JMh[3];
 
-    return gamutCuspTable;
+    // There is an edge case where we need to search towards the range when
+    // across the [0.0, hue_limit] boundary each edge needs the directions
+    // swapped. This is handled by comparing against the appropriate corner to
+    // make sure we are still in the expected range between the lower and upper
+    // corner hue limits
+    while ((upper_t - lower_t) > display_cusp_tolerance)
+    {
+        sample_t = midpoint(lower_t, upper_t);
+        sample   = lerp_f3(cusp_lower, cusp_upper, sample_t);
+        JMh      = RGB_to_JMh(sample, params);
+        if (JMh[2] < JMh_corners[lower_corner][2])
+        {
+            upper_t = sample_t;
+        }
+        else if (JMh[2] >= JMh_corners[upper_corner][2])
+        {
+            lower_t = sample_t;
+        }
+        else if (JMh[2] > hue)
+        {
+            upper_t = sample_t;
+        }
+        else
+        {
+            lower_t = sample_t;
+        }
+    }
+
+    // Use the midpoint of the final interval for the actual samples
+    sample_t = midpoint(lower_t, upper_t);
+    sample = lerp_f3(cusp_lower, cusp_upper, sample_t);
+    JMh = RGB_to_JMh(sample, params);
+
+    // previous[0] = upper_corner;
+    // previous[1] = sample_t;
+
+    return_JM[0] = JMh[0];
+    return_JM[1] = JMh[1];
+    return return_JM;
+}
+
+float[totalTableSize][3] build_cusp_table(float hue_table[totalTableSize],
+                                          float RGB_corners[totalCornerCount][3],
+                                          float JMh_corners[totalCornerCount][3],
+                                          JMhParams params)
+{
+    float previous[2] = {0.0, 0.0};
+    float output_table[totalTableSize][3];
+
+    for (int i = baseIndex; i != totalTableSize; i = i + 1)
+    {
+        float hue = hue_table[i];
+        float JM[2] = find_display_cusp_for_hue(hue, RGB_corners, JMh_corners, params, previous);
+        output_table[i][0] = JM[0];
+        output_table[i][1] = JM[1] * (1. + smooth_m * smooth_cusps);
+        output_table[i][2] = hue;
+    }
+
+    // Copy last nominal entry to start
+    output_table[0][0] = output_table[tableSize][0];
+    output_table[0][1] = output_table[tableSize][1];
+    output_table[0][2] = hue_table[0];
+
+    // Copy first nominal entry to end
+    output_table[baseIndex + tableSize][0] = output_table[baseIndex][0];
+    output_table[baseIndex + tableSize][1] = output_table[baseIndex][1];
+    output_table[baseIndex + tableSize][2] = hue_table[baseIndex + tableSize];
+
+    return output_table;    
+}
+
+float[totalTableSize][3] make_uniform_hue_gamut_table(JMhParams reach_params,
+                                                      JMhParams limit_params,
+                                                      ODTParams p )
+{
+    // The principal here is to sample the hues as uniformly as possible, whilst
+    // ensuring we sample the corners of the limiting gamut and the reach
+    // primaries at limit J Max
+    //
+    // The corners are calculated then the hues are extracted and merged to form
+    // a unique sorted hue list We then build the hue table from the list, those
+    // hues are then used to compute the JMh of the limiting gamut cusp.
+
+    float reach_JMh_corners[totalCornerCount][3];
+    float limiting_RGB_corners[totalCornerCount][3];
+    float limiting_JMh_corners[totalCornerCount][3];
+
+    reach_JMh_corners = find_reach_corners_table(reach_params, p);
+    build_limiting_cusp_corners_tables(limiting_RGB_corners, limiting_JMh_corners, limit_params, p.peakLuminance);
+    float sorted_hues[max_sorted_corners] = extract_sorted_cube_hues(reach_JMh_corners,
+                                                                     limiting_JMh_corners);
+                                                                     
+    float hue_table[totalTableSize] = build_hue_table(sorted_hues);
+
+    float cusp_JMh_table[totalTableSize][3] = build_cusp_table(hue_table, limiting_RGB_corners, limiting_JMh_corners, limit_params);
+
+    return cusp_JMh_table;
 }
 
 // Finds reach gamut M value at limitJmax
-float[gamutTableSize] make_reachM_table(Chromaticities C,
-                                        float limitJmax,
-                                        float peakLuminance)
+float[totalTableSize] make_reach_m_table(JMhParams params,
+                                         float limitJmax)
 {
-    const float XYZ_TO_RGB_M[3][3] = XYZtoRGB_f33(C, 1.0);
+    float reachTable[totalTableSize];
 
-    float reachTable[gamutTableSize];
-
-    int i;
-    for (i = 0; i < gamutTableSize; i = i + 1)
+    for (int i = 0; i < tableSize; i = i + 1)
     {
         float i_float = i;
-        float hue = base_hue_for_position(i, gamutTableSize);
+        float hue = base_hue_for_position(i, tableSize);
 
-        float search_range = 50.;
+        const float search_range = 50.;
+        const float search_maximum = 1300.;
         float low = 0.;
         float high = low + search_range;
         bool outside = false;
 
-        while ((outside != true) & (high < 1300.))
+        while ((outside != true) & (high < search_maximum))
         {
             float searchJMh[3] = {limitJmax, high, hue};
-            float newLimitRGB[3] = JMh_to_RGB(searchJMh,
-                                              XYZ_TO_RGB_M,
-                                              peakLuminance);
+            float newLimitRGB[3] = JMh_to_RGB(searchJMh, params);
             outside = any_below_zero(newLimitRGB);
             if (outside == false)
             {
@@ -1105,9 +1475,7 @@ float[gamutTableSize] make_reachM_table(Chromaticities C,
         {
             float sampleM = (high + low) / 2.;
             float searchJMh[3] = {limitJmax, sampleM, hue};
-            float newLimitRGB[3] = JMh_to_RGB(searchJMh,
-                                              XYZ_TO_RGB_M,
-                                              peakLuminance);
+            float newLimitRGB[3] = JMh_to_RGB(searchJMh, params);
             outside = any_below_zero(newLimitRGB);
             if (outside)
             {
@@ -1119,60 +1487,107 @@ float[gamutTableSize] make_reachM_table(Chromaticities C,
             }
         }
 
-        reachTable[i] = high;
+        reachTable[i + baseIndex] = high;
     }
+
+    // Copy last populated entry to first empty spot
+    reachTable[0] = reachTable[tableSize];
+
+    // Copy first populated entry to last empty spot
+    reachTable[baseIndex + tableSize] = reachTable[baseIndex];
 
     return reachTable;
 }
 
-bool outside_hull(float newLimitRGB[3])
+bool outside_hull(float rgb[3], float maxRGBtestVal)
 {
-    // limit value, once we cross this value, we are outside of the top gamut shell
-    float maxRGBtestVal = 1.0;
+    return rgb[0] > maxRGBtestVal || rgb[1] > maxRGBtestVal || rgb[2] > maxRGBtestVal;
+}
 
-    return newLimitRGB[0] > maxRGBtestVal || newLimitRGB[1] > maxRGBtestVal || newLimitRGB[2] > maxRGBtestVal;
+const int test_count = 5;
+const float testPositions[test_count] = {0.01, 0.1, 0.5, 0.8, 0.99};
+
+struct TestData {
+    float test_JMh[3];
+    float J_intersect_source;
+    float slope;
+    float J_intersect_cusp;
+};
+
+void generate_gamma_test_data(input float JMcusp[2],
+                              input float hue,
+                              input float limit_J_max,
+                              input float mid_J,
+                              input float focus_dist,
+                              output float test_JMh[test_count][3],
+                              output float J_intersect_source[test_count],
+                              output float slopes[test_count],
+                              output float J_intersect_cusp[test_count])
+{
+    float analytical_threshold = lerp(JMcusp[0], limit_J_max, focus_gain_blend);
+    float focus_J = compute_focus_J(JMcusp[0], mid_J, limit_J_max);
+    // print("any_thres:\t",analytical_threshold,"\n");
+    // print("focusJ:\t",focus_J,"\n");
+    // print("limit_J_max:\t\t",limit_J_max,"\n");
+
+    for (int testIndex = 0; testIndex != test_count; testIndex = testIndex + 1)
+    {
+        float test_J = lerp(JMcusp[0], limit_J_max, testPositions[testIndex]);
+        float slope_gain = get_focus_gain(test_J, analytical_threshold, limit_J_max, focus_dist);
+        float J_intersect = solve_J_intersect(test_J, JMcusp[1], focus_J, limit_J_max, slope_gain);
+        float slope = compute_compression_vector_slope(J_intersect, focus_J, limit_J_max, slope_gain);
+        float J_cusp = solve_J_intersect(JMcusp[0], JMcusp[1], focus_J, limit_J_max, slope_gain);
+
+        // Store values in parallel arrays
+        test_JMh[testIndex][0] = test_J;
+        test_JMh[testIndex][1] = JMcusp[1];
+        test_JMh[testIndex][2] = hue;
+        J_intersect_source[testIndex] = J_intersect;
+        slopes[testIndex] = slope;
+        J_intersect_cusp[testIndex] = J_cusp;
+
 }
 
 bool evaluate_gamma_fit(float JMcusp[2],
-                        float testJMh[][3],
-                        ODTParams PARAMS,
-                        float topGamma,
-                        float peakLuminance)
+                        float test_JMh[test_count][3],
+                        float J_intersect_source[test_count],
+                        float slopes[test_count],
+                        float J_intersect_cusp[test_count],
+                        float top_gamma_inv,
+                        float peakLuminance,
+                        float limit_J_max,
+                        float lower_hull_gamma_inv,
+                        JMhParams limit_params)
 {
-    float midJ = PARAMS.midJ;
-    float limitJmax = PARAMS.limitJmax;
-    float lowerHullGamma = PARAMS.lowerHullGamma;
-    float focusDist = PARAMS.focusDist;
+    float luminance_limit = peakLuminance / referenceLuminance;
 
-    float focusJ = lerp(JMcusp[0], midJ, min(1.0, cuspMidBlend - (JMcusp[0] / limitJmax)));
-
-    for (int testIndex = 0; testIndex < testJMh.size; testIndex = testIndex + 1)
+    for (int testIndex = 0; testIndex < test_count; testIndex = testIndex + 1)
     {
-        float slope_gain = limitJmax * focusDist * getFocusGain(testJMh[testIndex][0], JMcusp[0], limitJmax);
-        float approxLimit[3] = findGamutBoundaryIntersection(testJMh[testIndex],
-                                                             JMcusp,
-                                                             focusJ,
-                                                             limitJmax,
-                                                             slope_gain,
-                                                             topGamma,
-                                                             lowerHullGamma);
-        float approximate_JMh[3] = {approxLimit[0], approxLimit[1], testJMh[testIndex][2]};
+        // Compute gamut boundary intersection
+        float approxLimit_M = find_gamut_boundary_intersection(JMcusp,
+                                                               limit_J_max,
+                                                               top_gamma_inv,
+                                                               lower_hull_gamma_inv,
+                                                               J_intersect_source[testIndex],
+                                                               slopes[testIndex],
+                                                               J_intersect_cusp[testIndex]);
+        float approxLimit_J = J_intersect_source[testIndex] + slopes[testIndex] * approxLimit_M;
+        
+        // Store JMh values
+        float approximate_JMh[3] = {approxLimit_J, approxLimit_M, test_JMh[testIndex][2]};
 
-        float newLimitRGB[3] = JMh_to_RGB(approximate_JMh,
-                                          PARAMS.LIMIT_XYZ_TO_RGB,
-                                          peakLuminance);
+        //Convert to RGB
+        float newLimitRGB[3] = JMh_to_RGB(approximate_JMh, limit_params);
 
-        if (!outside_hull(newLimitRGB))
-        {
-            return false;
-        }
+        // Check if any values exceed the luminance limit. If so, we are outside of the top gamut shell.
+        if (!outside_hull(newLimitRGB,luminance_limit)) return false;
     }
+
     return true;
 }
 
-float[totalTableSize] make_upper_hull_gamma_table(float gamutCuspTable[][3],
-                                                  ODTParams PARAMS,
-                                                  float peakLuminance)
+float[totalTableSize] make_upper_hull_gamma_table(float gamutCuspTable[totalTableSize][3],
+                                                  ODTParams p)
 {
     // Find upper hull gamma values for the gamut mapper.
     // Start by taking a h angle
@@ -1184,43 +1599,36 @@ float[totalTableSize] make_upper_hull_gamma_table(float gamutCuspTable[][3],
     // positions between the cusp and Jmax we will check variables that get
     // set as we iterate through, once all are set to true we break the loop
 
-    const int test_count = 3;
-    float testPositions[test_count] = {0.01, 0.5, 0.99};
-    float gammaTable[gamutTableSize];
-    float gamutTopGamma[totalTableSize];
+    float upper_hull_gamma[totalTableSize];
 
-    for (int i = 0; i < gamutTableSize; i = i + 1)
+    for (int i = baseIndex; i != baseIndex + tableSize; i = i + 1)
     {
-        // Default value. This will get overridden as we loop,
-        // but can be a good diagnostic to make sure things are working
-        gammaTable[i] = -1.;
+        // print( i, "\t", gamutCuspTable[i][2], "\n");
+        // Get cusp from cusp table at hue position
+        float hue = gamutCuspTable[i][2];
+        float JMcusp[2] = { gamutCuspTable[i][0], gamutCuspTable[i][1] };
 
-        // get cusp from cusp table at hue position
-        float hue = base_hue_for_position(i, gamutTableSize);
-        float JMcusp[2] = cuspFromTable(hue, gamutCuspTable);
+        // print("hue:\t",hue,"\n");
+        // print("JMcusp:\t{",JMcusp[0],", ",JMcusp[1],"}\n");
 
-        float testJMh[test_count][3];
-        // create test values halfway between the cusp and the Jmax
-        for (int testIndex = 0; testIndex < testJMh.size; testIndex = testIndex + 1)
-        {
-            float testJ = JMcusp[0] + ((PARAMS.limitJmax - JMcusp[0]) * testPositions[testIndex]);
-            testJMh[testIndex][0] = testJ;
-            testJMh[testIndex][1] = JMcusp[1];
-            testJMh[testIndex][2] = hue;
-        }
+        float test_JMh[test_count][3];
+        float J_intersect_source[test_count];
+        float slopes[test_count];
+        float J_intersect_cusp[test_count];
 
-        float search_range = gammaSearchStep;
-        float low = gammaMinimum;
+        generate_gamma_test_data(JMcusp, hue, p.limit_J_max, p.mid_J, p.focus_dist,
+                                 test_JMh, J_intersect_source, slopes, J_intersect_cusp);
+        
+        float search_range = gamma_search_step;
+        float low = gamma_minimum;
         float high = low + search_range;
         bool outside = false;
-
-        while (!(outside) && (high < 5.0))
+        while (!(outside) && (high < gamma_maximum))
         {
-            bool gammaFound = evaluate_gamma_fit(JMcusp,
-                                                 testJMh,
-                                                 PARAMS,
-                                                 high,
-                                                 peakLuminance);
+            bool gammaFound = evaluate_gamma_fit(JMcusp, 
+                                                 test_JMh, J_intersect_source, slopes, J_intersect_cusp, 
+                                                 1./high, 
+                                                 p.peakLuminance, p.limit_J_max, p.lower_hull_gamma_inv, p.limit_params);
             if (!gammaFound)
             {
                 low = high;
@@ -1233,18 +1641,16 @@ float[totalTableSize] make_upper_hull_gamma_table(float gamutCuspTable[][3],
         }
 
         float testGamma = -1.0;
-        while ((high - low) > gammaAccuracy)
+        while ((high - low) > gamma_accuracy)
         {
-            testGamma = (high + low) / 2.;
+            testGamma = midpoint(high, low);
             bool gammaFound = evaluate_gamma_fit(JMcusp,
-                                                 testJMh,
-                                                 PARAMS,
-                                                 testGamma,
-                                                 peakLuminance);
+                                                 test_JMh, J_intersect_source, slopes, J_intersect_cusp,
+                                                 1./testGamma,
+                                                 p.peakLuminance, p.limit_J_max, p.lower_hull_gamma_inv, p.limit_params);
             if (gammaFound)
             {
                 high = testGamma;
-                gammaTable[i] = high;
             }
             else
             {
