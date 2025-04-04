@@ -358,40 +358,18 @@ float[3] XYZ_output_to_JMh(float XYZ[3],
     return JMh;
 }
 
-float compressionFunction(float v,
-                          float thr,
-                          float lim,
-                          bool invert = false)
+float reinhard_remap(float scale,
+                     float nd,
+                     bool invert = false)
 {
-    float s = (lim - thr) * (1.0 - thr) / (lim - 1.0);
-    float nd = (v - thr) / s;
-
-    float vCompressed;
-
-    if (invert)
-    {
-        if (v < thr || lim <= 1.0001 || v > thr + s)
-        {
-            vCompressed = v;
-        }
-        else
-        {
-            vCompressed = thr + s * (-nd / (nd - 1));
+    if (invert) {
+        if (nd >= 1.0) {
+            return scale;
+        } else {
+            return scale * -(nd / (nd - 1.));
         }
     }
-    else
-    {
-        if (v < thr || lim <= 1.0001)
-        {
-            vCompressed = v;
-        }
-        else
-        {
-            vCompressed = thr + s * nd / (1.0 + nd);
-        }
-    }
-
-    return vCompressed;
+    return scale * nd / (1. + nd);
 }
 
 int midpoint(int low, int high)
