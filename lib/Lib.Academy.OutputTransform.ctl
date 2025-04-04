@@ -189,7 +189,8 @@ float _post_adaptation_cone_response_compression_fwd(float Rc)
 
 float _post_adaptation_cone_response_compression_inv(float Ra)
 {
-    const float F_L_Y = (cam_nl_offset * Ra) / (1. - Ra);
+    const float Ra_lim = min(Ra, 0.99);
+    const float F_L_Y = (cam_nl_offset * Ra_lim) / (1. - Ra_lim);
     const float Rc = pow(F_L_Y, 1. / 0.42);
     return Rc;
 }
