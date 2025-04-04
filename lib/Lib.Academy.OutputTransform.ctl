@@ -40,10 +40,10 @@ const Chromaticities REACH_PRI = AP1;
 
 
 // Table generation
-const int tableSize = 360;       // add 1 extra entry at end that is to duplicate first entry for wrapped hue
-const int additionalTableEntries = 2; // allots for extra entries to wrap the hues without special cases
+const int tableSize = 360;
+const int additionalTableEntries = 2; // allots for extra entries to wrap the hues
 const int totalTableSize = tableSize + additionalTableEntries;
-const int baseIndex = 1; // array index for smallest hue, which is not necessarily a 0.0 hue angle
+const int baseIndex = 1; // array index for smallest filled entry of padded table
 
 const float hue_limit = 360.;
 
@@ -233,6 +233,7 @@ float _A_to_Y(float A,
 {
     float Ra = p.A_w_J * A;
     float Y = _post_adaptation_cone_response_compression_inv(Ra) / p.F_L_n;
+
     return Y;
 }
 
@@ -240,6 +241,7 @@ float J_to_Y(float J,
              JMhParams p)
 {
     float abs_J = fabs(J);
+
     return _A_to_Y(J_to_Achromatic_n(abs_J, p.inv_cz), p);
 }
 
@@ -249,6 +251,7 @@ float Y_to_J(float Y,
     float abs_Y = fabs(Y);
     float Ra = _post_adaptation_cone_response_compression_fwd(abs_Y * p.F_L_n);
     float J = Achromatic_n_to_J(Ra * p.inv_A_w_J, p.cz);
+
     return copysign(J, Y);
 }
 
@@ -325,6 +328,7 @@ float[3] Aab_to_RGB(float Aab[3],
         post_adaptation_cone_response_compression_inv(rgb_a[2])};
 
     float rgb[3] = mult_f3_f33(rgb_m, p.MATRIX_CAM16_c_to_RGB);
+
     return rgb;
 }
 
