@@ -1,37 +1,59 @@
-## Academy Color Encoding System Core Transforms ##
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!-- Copyright Contributors to the ACES Project. -->
 
-[![CLA assistant](https://cla-assistant.io/readme/badge/ampas/aces-dev)](https://cla-assistant.io/ampas/aces-dev)
+# ACES Core Transforms
 
-The Academy Color Encoding System (ACES) is a set of components that facilitates a wide range of motion picture and television workflows while eliminating the ambiguity of legacy file formats.  The system is designed to support both all-digital and hybrid film-digital motion picture workflows.
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+[![CLA
+assistant](https://cla-assistant.io/readme/badge/ampas/aces-dev)](https://cla-assistant.io/ampas/aces-dev)
 
-In ACES 2.0, the basic ACES components are divided across a few individual repositories:
+This repository houses core CTL library functions used by the ACES system.
+These functions provide the foundational building blocks upon which higher-level
+ACES transforms are constructed, including:
 
-* This repository (`aces-core`) houses the core transforms for ACES.
-* A set of preset Output Transforms to common outputs are tracked at [aces-output](https://github.com/ampas/aces-output), along with reference images that can be used to verify the output of each transform
-* Input Transforms are tracked at  [aces-input-and-colorspaces](https://github.com/ampas/aces-input-and-colorspaces)
-* Look Transforms are collected in [aces-look](https://github.com/ampas/aces-look)
-* AMF schema and example files can be found at [aces-amf](https://github.com/ampas/aces-amf)
-* Documentation is written in markdown and tracked at [aces-docs](https://github.com/ampas/aces-docs). It is published using mkdocs to [ACEScentral](docs.acescentral.com).
+- Rendering algorithms used in ACES Output Transforms (e.g., tonescale, chroma
+  compress, gamut compress)
 
-Regular snapshots of the entire system bundled, tagged and can be downloaded from [aces](https://github.com/ampas/aces).
+- Utility functions for common operations (e.g., clamping, matrix math)
 
-## Previous Versions
-The full code history of the ACES pre-2.0 remains in the commit history of this repository and can be accessed by checking out the relevant branch and/or tagged commit to view the transforms at that previous version.
+- Fundamental color science operations (e.g., transfer functions, matrix
+  conversions, chromatic adaptation)
 
-Tagged versions of ACES can be browsed in the [tag history](https://github.com/ampas/aces-dev/tags), including [ACES version 1.3](https://github.com/ampas/aces-dev/releases/tag/v1.3)
+### Pre-2.0 ACES versions
 
-## Prerequisites ##
+This repository preserves the commit history for earlier ACES versions. 
 
-### Color Transformation Language ###
+Previous versions of the ACES system from when it this repository was named
+**aces-dev** can be accessed by checking out the tagged versions of ACES in the
+[tag history](https://github.com/ampas/aces-dev/tags).
 
-Color Transformation Language (CTL) can be downloaded from
-https://github.com/ampas/CTL
+## Contributing
 
-## License ##
-This project is licensed under the terms of the [LICENSE](./LICENSE.md) agreement.
+ACES depends on community participation. Developers, manufacturers, and end
+users are encouraged to contribute code, bug fixes, documentation, and other
+technical artifacts.
 
-## Contributing ##
-Thank you for your interest in contributing to our project. Before any contributions can be accepted, we require contributors to sign a Contributor License Agreement (CLA) to ensure that the project can freely use your contributions. You can find more details and instructions on how to sign the CLA in the [CONTRIBUTING.md](./CONTRIBUTING.md) file.
+All contributors must have a signed Contributor License Agreement (CLA) on file
+to ensure that the project can freely use your contributions. 
 
-## Support ## 
-For support, please visit [ACESCentral.com](https://acescentral.com)
+See [CONTRIBUTING.md](./CONTRIBUTING.md) for more details.
+
+## Governance
+
+This repository is a submodule of the ACES project, hosted by the ASWF. Details
+about how the project operates can be found in the
+[GOVERNANCE.md](https://github.com/ampas/aces/blob/main/GOVERNANCE.md) file in
+the top-level ACES repository.
+
+## Reporting Issues
+
+To report a problem with Output Transfoms, please open an
+[issue](https://github.com/ampas/aces-core/issues).
+
+If the issue is senstive in nature or a security related issue, please do not
+report in the issue tracker. Instead refer to [SECURITY.md](SECURITY.md) for
+more information about the project security policy.
+
+## License
+
+The ACES Project is licensed under the [Apache 2.0 license](./LICENSE).

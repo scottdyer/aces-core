@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright Contributors to the ACES Project.
 
 // <ACEStransformID>urn:ampas:aces:transformId:v2.0:Lib.Academy.DisplayEncoding.a2.v1</ACEStransformID>
 // <ACESuserName>Display Encoding Functions</ACESuserName>
