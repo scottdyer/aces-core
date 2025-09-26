@@ -47,7 +47,7 @@ the top-level ACES repository.
 
 ## Reporting Issues
 
-To report a problem with Output Transfoms, please open an
+To report a problem with Core Transforms, please open an
 [issue](https://github.com/ampas/aces-core/issues).
 
 If the issue is senstive in nature or a security related issue, please do not
