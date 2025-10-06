@@ -7,9 +7,9 @@
 [![CLA
 assistant](https://cla-assistant.io/readme/badge/ampas/aces-dev)](https://cla-assistant.io/ampas/aces-dev)
 
-This repository houses core CTL library functions used by the ACES system.
-These functions provide the foundational building blocks upon which higher-level
-ACES transforms are constructed, including:
+This repository houses core CTL library functions used by the ACES system. These
+functions provide the foundational building blocks upon which higher-level ACES
+transforms are constructed, including:
 
 - Rendering algorithms used in ACES Output Transforms (e.g., tonescale, chroma
   compress, gamut compress)
@@ -19,13 +19,11 @@ ACES transforms are constructed, including:
 - Fundamental color science operations (e.g., transfer functions, matrix
   conversions, chromatic adaptation)
 
-### Pre-2.0 ACES versions
-
-This repository preserves the commit history for earlier ACES versions. 
-
-Previous versions of the ACES system from when it this repository was named
-**aces-dev** can be accessed by checking out the tagged versions of ACES in the
-[tag history](https://github.com/ampas/aces-dev/tags).
+> [!IMPORTANT] 
+> This repository was named **`aces-dev`** in versions of ACES prior to the 2.0
+release, and preserves the commit history for those earlier ACES versions. <br>
+Use the [tag history](https://github.com/ampas/aces-dev/tags) to access specific
+ACES versions from before v2.0.
 
 ## Contributing
 
