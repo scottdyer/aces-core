@@ -1,0 +1,64 @@
+name: Notify Parent of Update
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get Commit Message
+        id: msg
+        run: |
+          COMMIT_MSG=$(git log -1 --format=%s)
+          CLEAN_MSG=$(echo "$COMMIT_MSG" | jq -aR .)
+          echo "COMMIT_SUBJECT=$CLEAN_MSG" >> $GITHUB_OUTPUT
+
+      - name: Scrape Transform Metadata
+        id: scrape
+        run: |
+          # 1. Look for added files ending in .ctl or .cpp in the triggering commit
+          NEW_FILES=$(git diff-tree --no-commit-id --name-status -r ${{ github.sha }} | grep '^A' | awk '{print $2}' | grep -E '\.(ctl|cpp)$' || true)
+
+          # 2. Build a valid JSON array string
+          echo "[" > payload.json
+          FIRST=true
+          
+          for FILE in $NEW_FILES; do
+            if [ "$FIRST" = false ]; then echo "," >> payload.json; fi
+            
+            # Scrape XML tags out of the newly added source file
+            T_ID=$(sed -n 's/.*<ACEStransformID>\(.*\)<\/ACEStransformID>.*/\1/p' "$FILE" || true)
+            U_NAME=$(sed -n 's/.*<ACESuserName>\(.*\)<\/ACESuserName>.*/\1/p' "$FILE" || true)
+            
+            # Use safe fallbacks if the file lacks the expected metadata tags
+            T_ID=${T_ID:-"urn:ampas:aces:transformId:v2.0:unknown"}
+            U_NAME=${U_NAME:-"$FILE"}
+
+            echo "{\"file\": \"$FILE\", \"id\": \"$T_ID\", \"user\": \"$U_NAME\"}" >> payload.json
+            FIRST=false
+          done
+          echo "]" >> payload.json
+
+          # 3. Save the JSON string tightly packed for the GitHub payload environment
+          echo "TRANSFORMS_DATA=$(cat payload.json | jq -c .)" >> $GITHUB_OUTPUT
+
+      - name: Repository Dispatch
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.PARENT_REPO_PAT }} 
+          repository: scottdyer/aces
+          event-type: submodule_update
+          client-payload: |
+            {
+              "submodule": "aces-core",
+              "sha": "${{ github.sha }}",
+              "commit_msg": ${{ steps.msg.outputs.COMMIT_SUBJECT }},
+              "new_transforms": ${{ steps.scrape.outputs.TRANSFORMS_DATA }}
+            }
