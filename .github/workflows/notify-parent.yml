@@ -49,6 +49,17 @@ jobs:
           # 3. Save the JSON string tightly packed for the GitHub payload environment
           echo "TRANSFORMS_DATA=$(cat payload.json | jq -c .)" >> $GITHUB_OUTPUT
 
+      - name: Get Commit Message and Author
+        id: git_info
+        run: |
+          COMMIT_MSG=$(git log -1 --format=%s)
+          CLEAN_MSG=$(echo "$COMMIT_MSG" | jq -aR .)
+          echo "COMMIT_SUBJECT=$CLEAN_MSG" >> $GITHUB_OUTPUT
+          
+          # Extract author name and email for DCO
+          echo "AUTHOR_NAME=$(git log -1 --format='%an')" >> $GITHUB_OUTPUT
+          echo "AUTHOR_EMAIL=$(git log -1 --format='%ae')" >> $GITHUB_OUTPUT
+
       - name: Repository Dispatch
         uses: peter-evans/repository-dispatch@v4
         with:
@@ -60,5 +71,7 @@ jobs:
               "submodule": "aces-core",
               "sha": "${{ github.sha }}",
               "commit_msg": ${{ steps.msg.outputs.COMMIT_SUBJECT }},
+              "author_name": "${{ steps.git_info.outputs.AUTHOR_NAME }}",
+              "author_email": "${{ steps.git_info.outputs.AUTHOR_EMAIL }}",
               "new_transforms": ${{ steps.scrape.outputs.TRANSFORMS_DATA }}
             }
